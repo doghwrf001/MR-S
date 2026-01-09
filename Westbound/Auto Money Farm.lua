@@ -1,7 +1,20 @@
--- Owner
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/bloodball/-back-ups-for-libs/main/wizard"))()
+--[[
 
-local PhantomForcesWindow = Library:NewWindow("Westbound")
+  ███╗   ███╗██████╗              ███████╗    ████████╗███████╗ █████╗ ███╗   ███╗
+  ████╗ ████║██╔══██╗             ██╔════╝    ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║
+  ██╔████╔██║██████╔╝   ███████   ███████╗       ██║   █████╗  ███████║██╔████╔██║
+  ██║╚██╔╝██║██╔══██╗             ╚════██║       ██║   ██╔══╝  ██╔══██║██║╚██╔╝██║
+  ██║ ╚═╝ ██║██║  ██║             ███████║       ██║   ███████╗██║  ██║██║ ╚═╝ ██║
+  ╚═╝     ╚═╝╚═╝  ╚═╝             ╚══════╝       ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝
+
+                    by MR-S Team | http://qins.mc.hi.cn/MR-S
+]]--
+
+
+-- Owner
+local Library = loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/main/Westbound/Farm.lua"))()
+
+local PhantomForcesWindow = Library:NewWindow("MR-S Westbound")
 
 local KillingCheats = PhantomForcesWindow:NewSection("Auto Farm")
 
