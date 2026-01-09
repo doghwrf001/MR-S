@@ -9,6 +9,6 @@ local KillingCheats = PhantomForcesWindow:NewSection("Auto Farm")
 PhantomForcesWindow:NewSection("By: MR-S team")
 
 KillingCheats:CreateButton("Activate", function()
-    local scriptToExecute = game:HttpGet("https://pastebin.com/raw/VVZvF2rA")
+    local scriptToExecute = game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/main/Westbound/MR-S%20_Money%20Farm.lua")
     loadstring(scriptToExecute)()
 end)
