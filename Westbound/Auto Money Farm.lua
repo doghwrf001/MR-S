@@ -1,14 +1,14 @@
 -- Owner
-local Library = loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/main/Westbound/MR-S_Westbound-Auto%20Money%20Farm.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/bloodball/-back-ups-for-libs/main/wizard"))()
 
-local PhantomForcesWindow = Library:NewWindow("MR-S_Westbound Auto Farm")
+local PhantomForcesWindow = Library:NewWindow("Westbound")
 
-local KillingCheats = PhantomForcesWindow:NewSection("刷钱农场")
+local KillingCheats = PhantomForcesWindow:NewSection("Auto Farm")
 
--- UI
-PhantomForcesWindow:NewSection("By qins.mc.hi.cn/MR-S")
+-- Add credits in the UI
+PhantomForcesWindow:NewSection("By: MR-S team")
 
-KillingCheats:CreateButton("Open", function()
-    local scriptToExecute = game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/main/Westbound/Ui.lua")
+KillingCheats:CreateButton("Activate", function()
+    local scriptToExecute = game:HttpGet("https://pastebin.com/raw/VVZvF2rA")
     loadstring(scriptToExecute)()
 end)
