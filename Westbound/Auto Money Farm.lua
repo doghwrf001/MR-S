@@ -1,5 +1,5 @@
 -- Owner
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/bloodball/-back-ups-for-libs/main/wizard"))()
+local Library = loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/main/Westbound/MR-S_Westbound-Auto%20Money%20Farm.lua"))()
 
 local PhantomForcesWindow = Library:NewWindow("MR-S_Westbound Auto Farm")
 
