@@ -8,7 +8,7 @@ local KillingCheats = PhantomForcesWindow:NewSection("刷钱农场")
 -- UI
 PhantomForcesWindow:NewSection("By qins.mc.hi.cn/MR-S")
 
-KillingCheats:CreateButton("开", function()
+KillingCheats:CreateButton("Open", function()
     local scriptToExecute = game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/main/Westbound/Ui.lua")
     loadstring(scriptToExecute)()
 end)
