@@ -1215,7 +1215,7 @@ task.spawn(function()
 
     local function attemptBridgeConnection()
         if not CoreGui:FindFirstChild("InfiniteYield") then
-            local success, source = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source")
+            local success, source = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/doghwrf001/MR-S/refs/heads/Other/Load%20Infinite%20Yield/iy.lua")
             if success then
                 -- Enhanced bridge code exposes cmds table, execCmd, and notify with output capture
                 local bridgeCode = string.format([[
