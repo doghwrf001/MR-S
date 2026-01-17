@@ -24,7 +24,7 @@ _G.EmotesGUIRunning = true
 
 loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/Other/MR-S_Emote%20Center%20Script/Notify.lua"))()
 pcall(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/7yd7/Hub/Branch/GUIS/count-emote"))()
+    loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/Other/MR-S_Emote%20Center%20Script/count-emote.txt"))()
 end)
 
 getgenv().Notify({
@@ -2148,7 +2148,7 @@ task.spawn(function()
 end)
 
 if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/7yd7/Hub/refs/heads/Branch/GUIS/OpenEmote.lua"))()
+    loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/Other/MR-S_Emote%20Center%20Script/OpenEmote.lua"))()
     getgenv().Notify({
         Title = 'MR-S | 移动端表情',
         Content = '📱 已添加表情打开按钮以便使用',
