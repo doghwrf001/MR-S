@@ -22,7 +22,7 @@ if _G.EmotesGUIRunning then
 end
 _G.EmotesGUIRunning = true
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/7yd7/Menu-7yd7/refs/heads/Script/GUIS/Off-site/Notify.lua"))()
+loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/Other/MR-S_Emote%20Center%20Script/Notify.lua"))()
 pcall(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/7yd7/Hub/Branch/GUIS/count-emote"))()
 end)
