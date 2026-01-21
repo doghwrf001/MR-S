@@ -1,3 +1,4 @@
+-- MR-S Team｜http://qins.mc.hi.cn/MR-S
 -- This file was protected using Luraph Obfuscator v14.5.2 [https://lura.ph/]
 
 getgenv().SCRIPT_KEY = "97e921ac-e8de-4158-b5b8-d2a9d830616e"
