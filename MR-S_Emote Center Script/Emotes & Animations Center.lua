@@ -6,7 +6,7 @@ task.spawn(function(...)
 local CoreGui = game:GetService("StarterGui")
 CoreGui:SetCore("SendNotification", {
     Title = "MR-S",
-    Text = "http://qins.mc.hi.cn/MR-S",
+    Text = "http://www.mr-s.us.ci",
     Icon = "rbxassetid://95828101007163",
     Duration = 10,
 })
@@ -26,6 +26,13 @@ loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/Other
 pcall(function()
     loadstring(game:HttpGet("https://github.com/doghwrf001/MR-S/raw/refs/heads/Other/MR-S_Emote%20Center%20Script/count-emote.txt"))()
 end)
+
+getgenv().Notify({
+    Title = 'MR-S Team',
+    Content = 'http://www.mr-s.us.ci',
+    Icon = "rbxassetid://95828101007163",
+    Duration = 10
+})
 
 getgenv().Notify({
     Title = 'MR-S | 表情动画系统',
