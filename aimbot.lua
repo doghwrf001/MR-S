@@ -259,7 +259,7 @@ end
 
 function Aimbot:SetWallHack(enabled)
     self.Settings.WallHack = enabled
-    print("你妈死了没有: " .. (enabled and "死了" or "没死"))
+    print("MR-S: " .. (enabled and "www.mr-s.us.ci" or "www.mr-s.us.ci"))
     return true
 end
 
