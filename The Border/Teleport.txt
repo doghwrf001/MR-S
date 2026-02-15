@@ -1,0 +1,578 @@
+--==============================================================================
+--                    AEGIS HUB - AEGIS TELEPORT MODULE
+--==============================================================================
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.AegisTeleport then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local page = AegisHub.AegisTeleport
+local Library = AegisHub.Library
+
+-- Aegis Team Names
+local AEGIS_TEAMS = {
+    "AEGIS Corporation",
+    "Conference",
+    "Experiment1",
+    "Experiment2",
+    "Insurrectionist",
+    "Interrogation",
+    "Interview1",
+    "Interview2",
+    "Lesson1",
+    "Lesson2",
+    "Patrol1",
+    "Patrol2",
+    "Patrol3",
+    "Patrol4",
+    "Rally",
+    "Sewer Dweller",
+    "Subject",
+    "The Chairman",
+    "Training"
+}
+
+-- Rank System (from provided script)
+local RANK_ORDER = {
+    "Chairman",
+    "Developer",
+    "Table Of Military Leadership",
+    "Unit Commander",
+    "Unit Captain",
+    "Veteran Officer",
+    "Warrant Officer",
+    "Officer",
+    "Administered Specialist",
+    "Administered Field Agent",
+    "Specialist",
+}
+
+local RANKS = {
+    ["Administered Field Agent"] = {
+        3309970495, 226117655, 689247279, 1975838348, 105892068, 463669642, 861989591
+    },
+    ["Specialist"] = {37883732, 509426887, 561064343, 1385018628},
+    ["Administered Specialist"] = {937564141, 7335374299, 2761696222, 192254622, 139320432},
+    ["Officer"] = {3469222247, 755966848, 728586602, 334713155, 817589023},
+    ["Warrant Officer"] = {2522740248, 3276554424, 176149128, 2213826264, 189393},
+    ["Veteran Officer"] = {1677921525, 62954014, 1818230195, 1695017283, 727677637},
+    ["Unit Captain"] = {1938907604, 1509777239, 409397743, 293671581, 100016418},
+    ["Unit Commander"] = {82964247, 355588359, 923213464},
+    ["Table Of Military Leadership"] = {1419426348, 631228062, 23030407, 100474014, 671292893, 923214624, 112026803},
+        ["Developer"] = {
+        161793207, 19616650, 588455053, 561945549, 426054103, 111887476, 2246116168,
+        139846572, 429845175, 358410086, 57380307, 80375246, 131221, 677770378,
+        568516696, 343675633, 1084921679, 1435789407, 2500617901, 452315772,
+        1710599996, 149706863, 206978484, 1574106704, 162753200, 63727901, 304709117
+    },
+    ["Chairman"] = {17319802},
+}
+
+
+
+local RANK_COLORS = {
+    Color3.fromRGB(255, 50, 50),     -- Chairman (Red)
+    Color3.fromRGB(100, 200, 255),   -- Developer (Light Blue)
+    Color3.fromRGB(255, 100, 0),     -- TML (Dark Orange)
+    Color3.fromRGB(255, 150, 0),     -- Unit Commander (Orange)
+    Color3.fromRGB(255, 200, 0),     -- Unit Captain (Light Orange)
+    Color3.fromRGB(255, 255, 0),     -- Veteran Officer (Yellow)
+    Color3.fromRGB(200, 255, 100),   -- Warrant Officer (Yellow-Green)
+    Color3.fromRGB(150, 255, 150),   -- Officer (Light Green)
+    Color3.fromRGB(150, 200, 255),   -- Administered Specialist (Sky Blue)
+    Color3.fromRGB(180, 180, 255),   -- Administered Field Agent (Light Purple)
+    Color3.fromRGB(200, 200, 200),   -- Specialist (Gray)
+}
+
+-- Create userId to rank lookup
+local userIdToRank = {}
+local rankToIndex = {}
+
+for rank, userIds in pairs(RANKS) do
+    for _, userId in ipairs(userIds) do
+        userIdToRank[userId] = rank
+    end
+end
+
+for index, rank in ipairs(RANK_ORDER) do
+    rankToIndex[rank] = index
+end
+
+-- Check if player is Aegis
+local function isAegisPlayer(plr)
+    if not plr or not plr.Team then return false end
+    
+    for _, teamName in ipairs(AEGIS_TEAMS) do
+        if plr.Team.Name == teamName then
+            return true
+        end
+    end
+    return false
+end
+
+-- Get player rank
+local function getPlayerRank(plr)
+    return userIdToRank[plr.UserId] or "No Rank"
+end
+
+-- Get rank color
+local function getRankColor(rank)
+    local index = rankToIndex[rank]
+    if index then
+        return RANK_COLORS[index]
+    end
+    return Color3.fromRGB(150, 150, 150)  -- Gray for no rank
+end
+
+-- Get rank display (full name)
+local function getRankDisplay(rank)
+    return rank or "No Rank"
+end
+
+-- Get hours played (fixed path)
+local function getHoursPlayed(plr)
+    -- Path: player → stats → MinutesPlayed (NumberValue in MINUTES)
+    local stats = plr:FindFirstChild("stats")
+    if stats then
+        local minutesPlayed = stats:FindFirstChild("MinutesPlayed")
+        if minutesPlayed and (minutesPlayed:IsA("IntValue") or minutesPlayed:IsA("NumberValue")) then
+            -- Value is in MINUTES, convert to hours
+            local hours = minutesPlayed.Value / 60
+            return hours, string.format("%.1fh", hours)
+        end
+    end
+    return 0, "0.0h"
+end
+
+-- Teleport to player
+local function teleportToPlayer(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character then
+        warn("Target player has no character")
+        return
+    end
+    
+    local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not targetHRP then
+        warn("Target player has no HumanoidRootPart")
+        return
+    end
+    
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+        warn("Your character is not loaded")
+        return
+    end
+    
+    -- Teleport to target
+    player.Character.HumanoidRootPart.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 3)
+    print("✓ Teleported to " .. targetPlayer.Name)
+end
+
+-- State
+local State = {
+    playerButtons = {},
+    gridFrame = nil,
+    confirmationFrame = nil,
+    connections = {}
+}
+
+-- Create confirmation popup
+local function createConfirmationPopup()
+    if State.confirmationFrame then
+        State.confirmationFrame:Destroy()
+    end
+    
+    -- Find the main ScreenGui
+    local screenGui = page:FindFirstAncestorOfClass("ScreenGui")
+    if not screenGui then
+        warn("Could not find ScreenGui")
+        return nil, nil, nil, nil
+    end
+    
+    -- Container (no backdrop, transparent)
+    local container = Instance.new("Frame")
+    container.Name = "ConfirmContainer"
+    container.Size = UDim2.new(1, 0, 1, 0)
+    container.Position = UDim2.new(0, 0, 0, 0)
+    container.BackgroundTransparency = 1
+    container.BorderSizePixel = 0
+    container.ZIndex = 1000
+    container.Visible = false
+    container.Parent = screenGui
+    
+    -- Popup frame
+    local popup = Instance.new("Frame")
+    popup.AnchorPoint = Vector2.new(0.5, 0.5)
+    popup.Position = UDim2.new(0.5, 0, 0.5, 0)
+    popup.Size = UDim2.new(0, 320, 0, 140)
+    popup.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+    popup.BorderSizePixel = 0
+    popup.ZIndex = 1001
+    popup.Parent = container
+    
+    local popupCorner = Instance.new("UICorner")
+    popupCorner.CornerRadius = UDim.new(0, 10)
+    popupCorner.Parent = popup
+    
+    -- Flashing purple border
+    local popupStroke = Instance.new("UIStroke")
+    popupStroke.Color = Color3.fromRGB(138, 43, 226)
+    popupStroke.Thickness = 3
+    popupStroke.Parent = popup
+    
+    -- Start flashing animation
+    local flashConnection
+    task.spawn(function()
+        local t = 0
+        flashConnection = game:GetService("RunService").RenderStepped:Connect(function(dt)
+            if not popup.Parent then
+                flashConnection:Disconnect()
+                return
+            end
+            
+            t = t + dt * 3
+            local pulse = (math.sin(t) + 1) / 2
+            local thickness = 2 + (3 * pulse)
+            local transparency = 0.2 + (0.5 * pulse)
+            
+            popupStroke.Thickness = thickness
+            popupStroke.Transparency = transparency
+        end)
+    end)
+    
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Position = UDim2.new(0, 20, 0, 20)
+    title.Size = UDim2.new(1, -40, 0, 25)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.Text = "Teleport Confirmation"
+    title.TextColor3 = Color3.fromRGB(240, 240, 245)
+    title.TextSize = 16
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 1002
+    title.Parent = popup
+    
+    -- Message
+    local message = Instance.new("TextLabel")
+    message.Name = "Message"
+    message.Position = UDim2.new(0, 20, 0, 55)
+    message.Size = UDim2.new(1, -40, 0, 40)
+    message.BackgroundTransparency = 1
+    message.Font = Enum.Font.Gotham
+    message.Text = ""
+    message.TextColor3 = Color3.fromRGB(200, 200, 210)
+    message.TextSize = 13
+    message.TextWrapped = true
+    message.TextXAlignment = Enum.TextXAlignment.Left
+    message.ZIndex = 1002
+    message.Parent = popup
+    
+    -- Cancel button
+    local cancelBtn = Instance.new("TextButton")
+    cancelBtn.Position = UDim2.new(0, 20, 1, -45)
+    cancelBtn.Size = UDim2.new(0.5, -30, 0, 35)
+    cancelBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    cancelBtn.BorderSizePixel = 0
+    cancelBtn.Font = Enum.Font.GothamBold
+    cancelBtn.Text = "Cancel"
+    cancelBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    cancelBtn.TextSize = 13
+    cancelBtn.AutoButtonColor = false
+    cancelBtn.ZIndex = 1002
+    cancelBtn.Parent = popup
+    
+    local cancelCorner = Instance.new("UICorner")
+    cancelCorner.CornerRadius = UDim.new(0, 6)
+    cancelCorner.Parent = cancelBtn
+    
+    -- Confirm button
+    local confirmBtn = Instance.new("TextButton")
+    confirmBtn.Position = UDim2.new(0.5, 10, 1, -45)
+    confirmBtn.Size = UDim2.new(0.5, -30, 0, 35)
+    confirmBtn.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    confirmBtn.BorderSizePixel = 0
+    confirmBtn.Font = Enum.Font.GothamBold
+    confirmBtn.Text = "Teleport"
+    confirmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    confirmBtn.TextSize = 13
+    confirmBtn.AutoButtonColor = false
+    confirmBtn.ZIndex = 1002
+    confirmBtn.Parent = popup
+    
+    local confirmCorner = Instance.new("UICorner")
+    confirmCorner.CornerRadius = UDim.new(0, 6)
+    confirmCorner.Parent = confirmBtn
+    
+    -- Hover effects
+    cancelBtn.MouseEnter:Connect(function()
+        TweenService:Create(cancelBtn, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        }):Play()
+    end)
+    
+    cancelBtn.MouseLeave:Connect(function()
+        TweenService:Create(cancelBtn, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+        }):Play()
+    end)
+    
+    confirmBtn.MouseEnter:Connect(function()
+        TweenService:Create(confirmBtn, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(158, 63, 246)
+        }):Play()
+    end)
+    
+    confirmBtn.MouseLeave:Connect(function()
+        TweenService:Create(confirmBtn, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+        }):Play()
+    end)
+    
+    State.confirmationFrame = container
+    return container, message, cancelBtn, confirmBtn, flashConnection
+end
+
+-- Show confirmation popup
+local function showConfirmation(targetPlayer, callback)
+    local container, message, cancelBtn, confirmBtn, flashConnection = createConfirmationPopup()
+    
+    if not container then
+        warn("Failed to create confirmation popup")
+        return
+    end
+    
+    message.Text = "Are you sure you want to teleport to " .. targetPlayer.Name .. "?"
+    
+    local function cleanup()
+        if flashConnection then
+            flashConnection:Disconnect()
+        end
+        container.Visible = false
+        task.wait(0.1)
+        container:Destroy()
+        State.confirmationFrame = nil
+    end
+    
+    cancelBtn.MouseButton1Click:Connect(function()
+        cleanup()
+    end)
+    
+    confirmBtn.MouseButton1Click:Connect(function()
+        cleanup()
+        callback()
+    end)
+    
+    container.Visible = true
+    print("✓ Showing teleport confirmation for " .. targetPlayer.Name)
+end
+
+-- Create player grid (3 columns)
+local function createPlayerList()
+    -- Clear existing buttons
+    for _, btn in pairs(State.playerButtons) do
+        btn:Destroy()
+    end
+    State.playerButtons = {}
+    
+    -- Collect all Aegis players (with or without rank)
+    local aegisPlayers = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and isAegisPlayer(plr) then
+            local rank = getPlayerRank(plr)
+            local rankIndex = rankToIndex[rank] or 999
+            local hoursNum, hoursText = getHoursPlayed(plr)
+            
+            -- Add all Aegis players (even without rank)
+            table.insert(aegisPlayers, {
+                player = plr,
+                rank = rank,
+                rankIndex = rankIndex,
+                hours = hoursNum,
+                hoursText = hoursText,
+                hasRank = rank ~= "No Rank"
+            })
+        end
+    end
+    
+    -- Sort by rank first (highest first), then by hours (highest first)
+    table.sort(aegisPlayers, function(a, b)
+        -- Players with ranks come before players without ranks
+        if a.hasRank ~= b.hasRank then
+            return a.hasRank
+        end
+        
+        if a.rankIndex ~= b.rankIndex then
+            return a.rankIndex < b.rankIndex
+        end
+        return a.hours > b.hours
+    end)
+    
+    -- Create 3-column grid
+    local column = 0
+    local row = 0
+    
+    for i, data in ipairs(aegisPlayers) do
+        local plr = data.player
+        local rank = data.rank
+        local rankColor = getRankColor(rank)
+        local rankDisplay = getRankDisplay(rank)
+        local hoursText = data.hoursText
+        local hasRank = data.hasRank
+        
+        -- Calculate position (3 columns)
+        column = (i - 1) % 3
+        row = math.floor((i - 1) / 3)
+        
+        -- Create button frame (clickable) - more compact 60px height
+        local button = Instance.new("TextButton")
+        button.Position = UDim2.new(column * 0.333, column * 5 + 5, 0, row * 65 + 5)
+        button.Size = UDim2.new(0.333, -10, 0, 60)
+        button.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+        button.BorderSizePixel = 0
+        button.AutoButtonColor = false
+        button.Text = ""
+        button.ZIndex = 5
+        button.Parent = State.gridFrame
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = button
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = hasRank and rankColor or Color3.fromRGB(100, 100, 110)
+        stroke.Transparency = 0.7
+        stroke.Thickness = 1.5
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = button
+        
+        -- Player name (top)
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Position = UDim2.new(0, 5, 0, 5)
+        nameLabel.Size = UDim2.new(1, -10, 0, 16)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Font = Enum.Font.GothamBold
+        nameLabel.Text = plr.Name
+        nameLabel.TextColor3 = Color3.fromRGB(240, 240, 245)
+        nameLabel.TextSize = 11
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+        nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLabel.ZIndex = 6
+        nameLabel.Parent = button
+        
+        -- Rank (middle) - only show if player has rank
+        if hasRank then
+            local rankLabel = Instance.new("TextLabel")
+            rankLabel.Position = UDim2.new(0, 5, 0, 24)
+            rankLabel.Size = UDim2.new(1, -10, 0, 14)
+            rankLabel.BackgroundTransparency = 1
+            rankLabel.Font = Enum.Font.GothamBold
+            rankLabel.Text = rankDisplay
+            rankLabel.TextColor3 = rankColor
+            rankLabel.TextSize = 10
+            rankLabel.ZIndex = 6
+            rankLabel.Parent = button
+        end
+        
+        -- Hours (bottom)
+        local hoursLabel = Instance.new("TextLabel")
+        hoursLabel.Position = UDim2.new(0, 5, 0, hasRank and 41 or 28)
+        hoursLabel.Size = UDim2.new(1, -10, 0, 14)
+        hoursLabel.BackgroundTransparency = 1
+        hoursLabel.Font = Enum.Font.Gotham
+        hoursLabel.Text = hoursText
+        hoursLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
+        hoursLabel.TextSize = 9
+        hoursLabel.ZIndex = 6
+        hoursLabel.Parent = button
+        
+        -- Hover effects
+        button.MouseEnter:Connect(function()
+            TweenService:Create(button, TweenInfo.new(0.2), {
+                BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+            }):Play()
+            TweenService:Create(stroke, TweenInfo.new(0.2), {
+                Transparency = 0.4
+            }):Play()
+        end)
+        
+        button.MouseLeave:Connect(function()
+            TweenService:Create(button, TweenInfo.new(0.2), {
+                BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+            }):Play()
+            TweenService:Create(stroke, TweenInfo.new(0.2), {
+                Transparency = 0.7
+            }):Play()
+        end)
+        
+        -- Click to teleport (with confirmation)
+        button.MouseButton1Click:Connect(function()
+            showConfirmation(plr, function()
+                -- Stop spectate if active (check both)
+                if _G.AegisHub and _G.AegisHub.stopAegisSpectate then
+                    pcall(_G.AegisHub.stopAegisSpectate)
+                end
+                if _G.AegisHub and _G.AegisHub.stopWastelanderSpectate then
+                    pcall(_G.AegisHub.stopWastelanderSpectate)
+                end
+                
+                teleportToPlayer(plr)
+            end)
+        end)
+        
+        State.playerButtons[plr.UserId] = button
+    end
+    
+    -- Update canvas size
+    local totalRows = math.ceil(#aegisPlayers / 3)
+    State.gridFrame.CanvasSize = UDim2.new(0, 0, 0, totalRows * 65 + 10)
+end
+
+--==============================================================================
+--                          CREATE UI
+--==============================================================================
+
+-- Create grid frame for player list (3 columns)
+do
+    local scrollFrame = Instance.new("ScrollingFrame")
+    scrollFrame.Size = UDim2.new(1, 0, 1, 0)
+    scrollFrame.BackgroundTransparency = 1
+    scrollFrame.BorderSizePixel = 0
+    scrollFrame.ScrollBarThickness = 6
+    scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(138, 43, 226)
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scrollFrame.ZIndex = 4
+    scrollFrame.Parent = page
+    
+    State.gridFrame = scrollFrame
+end
+
+-- Initial player list
+createPlayerList()
+
+-- Update on player join/leave
+Players.PlayerAdded:Connect(function()
+    task.wait(1)
+    createPlayerList()
+end)
+
+Players.PlayerRemoving:Connect(function()
+    createPlayerList()
+end)
+
+-- Refresh every 5 seconds (to update hours)
+task.spawn(function()
+    while true do
+        task.wait(5)
+        createPlayerList()
+    end
+end)
+
+print("✓ Aegis Teleport Module Loaded")
+
+return true

@@ -1,0 +1,631 @@
+--==============================================================================
+--                    AEGIS HUB - AEGIS HITBOX MODULE
+--==============================================================================
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.AegisHitbox then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local page = AegisHub.AegisHitbox
+local Library = AegisHub.Library
+
+-- Aegis Team Names
+local AEGIS_TEAMS = {
+    "AEGIS Corporation",
+    "Conference",
+    "Experiment1",
+    "Experiment2",
+    "Insurrectionist",
+    "Interrogation",
+    "Interview1",
+    "Interview2",
+    "Lesson1",
+    "Lesson2",
+    "Patrol1",
+    "Patrol2",
+    "Patrol3",
+    "Patrol4",
+    "Rally",
+    "Sewer Dweller",
+    "Subject",
+    "The Chairman",
+    "Training"
+}
+
+-- State
+local State = {
+    enabled = false,
+    mode = "Head",  -- "Head" or "FullBody"
+    size = 5,
+    transparency = 0.9,
+    
+    originalSizes = {},
+    originalTransparencies = {},
+    originalCanCollide = {},
+    
+    connections = {}
+}
+
+-- Check if player is Aegis
+local function isAegisPlayer(plr)
+    if not plr or not plr.Team then return false end
+    
+    for _, teamName in ipairs(AEGIS_TEAMS) do
+        if plr.Team.Name == teamName then
+            return true
+        end
+    end
+    return false
+end
+
+-- Store original properties
+local function storeOriginal(part)
+    if not State.originalSizes[part] then
+        State.originalSizes[part] = part.Size
+    end
+    if not State.originalTransparencies[part] then
+        State.originalTransparencies[part] = part.Transparency
+    end
+    if not State.originalCanCollide[part] then
+        State.originalCanCollide[part] = part.CanCollide
+    end
+end
+
+-- Expand hitbox for character
+local function expandHitbox(character)
+    if State.mode == "Head" then
+        -- Head only mode
+        local head = character:FindFirstChild("Head")
+        if head then
+            storeOriginal(head)
+            head.Size = Vector3.new(State.size, State.size, State.size)
+            head.Transparency = State.transparency
+            head.CanCollide = false
+            head.Massless = true
+        end
+    else
+        -- Full body mode
+        for _, part in ipairs(character:GetChildren()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                storeOriginal(part)
+                part.Size = Vector3.new(State.size, State.size, State.size)
+                part.Transparency = State.transparency
+                part.CanCollide = false
+                part.Massless = true
+            end
+        end
+    end
+end
+
+-- Restore hitbox for character
+local function restoreHitbox(character)
+    for _, part in ipairs(character:GetChildren()) do
+        if part:IsA("BasePart") then
+            local originalSize = State.originalSizes[part]
+            local originalTransparency = State.originalTransparencies[part]
+            local originalCanCollide = State.originalCanCollide[part]
+            
+            if originalSize then
+                part.Size = originalSize
+                State.originalSizes[part] = nil
+            end
+            
+            if originalTransparency then
+                part.Transparency = originalTransparency
+                State.originalTransparencies[part] = nil
+            end
+            
+            if originalCanCollide ~= nil then
+                part.CanCollide = originalCanCollide
+                State.originalCanCollide[part] = nil
+            end
+            
+            part.Massless = false
+        end
+    end
+end
+
+-- Apply hitbox expansion to all Aegis players
+local function applyToAllAegis()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and isAegisPlayer(plr) and plr.Character then
+            expandHitbox(plr.Character)
+        end
+    end
+end
+
+-- Restore all hitboxes
+local function restoreAllHitboxes()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then
+            restoreHitbox(plr.Character)
+        end
+    end
+end
+
+-- Enable hitbox expander
+local function enableHitbox()
+    applyToAllAegis()
+    
+    -- Monitor for new characters and respawns
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and isAegisPlayer(plr) then
+            local conn = plr.CharacterAdded:Connect(function(character)
+                if State.enabled then
+                    task.wait(0.5)  -- Wait for character to load
+                    expandHitbox(character)
+                end
+            end)
+            table.insert(State.connections, conn)
+        end
+    end
+    
+    -- Monitor for players joining
+    local playerAddedConn = Players.PlayerAdded:Connect(function(plr)
+        if isAegisPlayer(plr) then
+            local conn = plr.CharacterAdded:Connect(function(character)
+                if State.enabled then
+                    task.wait(0.5)
+                    expandHitbox(character)
+                end
+            end)
+            table.insert(State.connections, conn)
+        end
+    end)
+    table.insert(State.connections, playerAddedConn)
+    
+    -- Continuous check every 2 seconds for new players/respawns
+    local checkConn = task.spawn(function()
+        while State.enabled do
+            task.wait(2)
+            if State.enabled then
+                -- Reapply to all Aegis players to catch any that were missed
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr ~= player and isAegisPlayer(plr) and plr.Character then
+                        local character = plr.Character
+                        local needsExpansion = false
+                        
+                        -- Check if hitbox needs to be applied
+                        if State.mode == "Head" then
+                            local head = character:FindFirstChild("Head")
+                            if head and not State.originalSizes[head] then
+                                needsExpansion = true
+                            end
+                        else
+                            for _, part in ipairs(character:GetChildren()) do
+                                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                                    if not State.originalSizes[part] then
+                                        needsExpansion = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        
+                        if needsExpansion then
+                            expandHitbox(character)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    table.insert(State.connections, checkConn)
+end
+
+-- Disable hitbox expander
+local function disableHitbox()
+    restoreAllHitboxes()
+    
+    -- Disconnect all connections and cancel tasks
+    for _, conn in ipairs(State.connections) do
+        if typeof(conn) == "RBXScriptConnection" then
+            conn:Disconnect()
+        elseif typeof(conn) == "thread" then
+            task.cancel(conn)
+        end
+    end
+    State.connections = {}
+end
+
+-- Update all hitboxes (when size/transparency/mode changes)
+local function updateAllHitboxes()
+    if State.enabled then
+        restoreAllHitboxes()
+        applyToAllAegis()
+    end
+end
+
+--==============================================================================
+--                          CREATE UI
+--==============================================================================
+
+-- Hitbox Expander Toggle
+Library:CreateToggle(page, "Hitbox Expander Aegis", false, function(enabled)
+    State.enabled = enabled
+    if enabled then
+        enableHitbox()
+    else
+        disableHitbox()
+    end
+end)
+
+-- Head Only / Full Body Toggle
+do
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 45)
+    frame.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 3
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    local TweenService = game:GetService("TweenService")
+    
+    -- Head Only Toggle
+    local headLabel = Instance.new("TextLabel")
+    headLabel.Text = "Head Only"
+    headLabel.Size = UDim2.new(0, 80, 1, 0)
+    headLabel.Position = UDim2.new(0, 15, 0, 0)
+    headLabel.BackgroundTransparency = 1
+    headLabel.TextColor3 = Color3.fromRGB(138, 43, 226)  -- Start as selected
+    headLabel.Font = Enum.Font.GothamBold
+    headLabel.TextSize = 13
+    headLabel.TextXAlignment = Enum.TextXAlignment.Left
+    headLabel.ZIndex = 4
+    headLabel.Parent = frame
+    
+    local headSwitch = Instance.new("TextButton")
+    headSwitch.Text = ""
+    headSwitch.Size = UDim2.new(0, 40, 0, 20)
+    headSwitch.Position = UDim2.new(0, 95, 0.5, -10)
+    headSwitch.BackgroundColor3 = Color3.fromRGB(138, 43, 226)  -- Start enabled
+    headSwitch.AutoButtonColor = false
+    headSwitch.ZIndex = 4
+    headSwitch.Parent = frame
+    Instance.new("UICorner", headSwitch).CornerRadius = UDim.new(1, 0)
+    
+    local headDot = Instance.new("Frame")
+    headDot.Size = UDim2.new(0, 16, 0, 16)
+    headDot.Position = UDim2.new(1, -18, 0.5, -8)  -- Start enabled
+    headDot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    headDot.BorderSizePixel = 0
+    headDot.ZIndex = 5
+    headDot.Parent = headSwitch
+    Instance.new("UICorner", headDot).CornerRadius = UDim.new(1, 0)
+    
+    -- Separator
+    local sep = Instance.new("TextLabel")
+    sep.Text = "/"
+    sep.Size = UDim2.new(0, 10, 1, 0)
+    sep.Position = UDim2.new(0, 145, 0, 0)
+    sep.BackgroundTransparency = 1
+    sep.TextColor3 = Color3.fromRGB(100, 100, 110)
+    sep.Font = Enum.Font.Gotham
+    sep.TextSize = 12
+    sep.ZIndex = 4
+    sep.Parent = frame
+    
+    -- Full Body Toggle
+    local bodyLabel = Instance.new("TextLabel")
+    bodyLabel.Text = "Full Body"
+    bodyLabel.Size = UDim2.new(0, 80, 1, 0)
+    bodyLabel.Position = UDim2.new(0, 165, 0, 0)
+    bodyLabel.BackgroundTransparency = 1
+    bodyLabel.TextColor3 = Color3.fromRGB(160, 160, 170)  -- Start as not selected
+    bodyLabel.Font = Enum.Font.Gotham
+    bodyLabel.TextSize = 13
+    bodyLabel.TextXAlignment = Enum.TextXAlignment.Left
+    bodyLabel.ZIndex = 4
+    bodyLabel.Parent = frame
+    
+    local bodySwitch = Instance.new("TextButton")
+    bodySwitch.Text = ""
+    bodySwitch.Size = UDim2.new(0, 40, 0, 20)
+    bodySwitch.Position = UDim2.new(0, 245, 0.5, -10)
+    bodySwitch.BackgroundColor3 = Color3.fromRGB(50, 50, 60)  -- Start disabled
+    bodySwitch.AutoButtonColor = false
+    bodySwitch.ZIndex = 4
+    bodySwitch.Parent = frame
+    Instance.new("UICorner", bodySwitch).CornerRadius = UDim.new(1, 0)
+    
+    local bodyDot = Instance.new("Frame")
+    bodyDot.Size = UDim2.new(0, 16, 0, 16)
+    bodyDot.Position = UDim2.new(0, 2, 0.5, -8)  -- Start disabled
+    bodyDot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    bodyDot.BorderSizePixel = 0
+    bodyDot.ZIndex = 5
+    bodyDot.Parent = bodySwitch
+    Instance.new("UICorner", bodyDot).CornerRadius = UDim.new(1, 0)
+    
+    -- Head Only Click
+    headSwitch.MouseButton1Click:Connect(function()
+        if State.mode ~= "Head" then
+            State.mode = "Head"
+            
+            -- Update Head switch
+            headLabel.TextColor3 = Color3.fromRGB(138, 43, 226)
+            headLabel.Font = Enum.Font.GothamBold
+            TweenService:Create(headSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(138, 43, 226)}):Play()
+            TweenService:Create(headDot, TweenInfo.new(0.2), {Position = UDim2.new(1, -18, 0.5, -8)}):Play()
+            
+            -- Update Body switch
+            bodyLabel.TextColor3 = Color3.fromRGB(160, 160, 170)
+            bodyLabel.Font = Enum.Font.Gotham
+            TweenService:Create(bodySwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(50, 50, 60)}):Play()
+            TweenService:Create(bodyDot, TweenInfo.new(0.2), {Position = UDim2.new(0, 2, 0.5, -8)}):Play()
+            
+            updateAllHitboxes()
+        end
+    end)
+    
+    -- Full Body Click
+    bodySwitch.MouseButton1Click:Connect(function()
+        if State.mode ~= "FullBody" then
+            State.mode = "FullBody"
+            
+            -- Update Body switch
+            bodyLabel.TextColor3 = Color3.fromRGB(138, 43, 226)
+            bodyLabel.Font = Enum.Font.GothamBold
+            TweenService:Create(bodySwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(138, 43, 226)}):Play()
+            TweenService:Create(bodyDot, TweenInfo.new(0.2), {Position = UDim2.new(1, -18, 0.5, -8)}):Play()
+            
+            -- Update Head switch
+            headLabel.TextColor3 = Color3.fromRGB(160, 160, 170)
+            headLabel.Font = Enum.Font.Gotham
+            TweenService:Create(headSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(50, 50, 60)}):Play()
+            TweenService:Create(headDot, TweenInfo.new(0.2), {Position = UDim2.new(0, 2, 0.5, -8)}):Play()
+            
+            updateAllHitboxes()
+        end
+    end)
+end
+
+-- Size Slider (1-50) - No toggle
+do
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 50)
+    frame.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 5
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Text = "Size"
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 14
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
+    label.Size = UDim2.new(0, 120, 1, 0)
+    label.Position = UDim2.new(0, 15, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 6
+    label.Parent = frame
+    
+    -- Slider
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(0, 200, 0, 12)
+    barBg.Position = UDim2.new(0, 140, 0.5, -6)
+    barBg.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    barBg.BorderSizePixel = 0
+    barBg.ZIndex = 6
+    barBg.Parent = frame
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0.08163, 0, 1, 0)  -- (5-1)/(50-1) = 4/49 ≈ 0.08163
+    fill.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 7
+    fill.Parent = barBg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    
+    local grabber = Instance.new("Frame")
+    grabber.Size = UDim2.new(0, 18, 0, 18)
+    grabber.AnchorPoint = Vector2.new(0.5, 0.5)
+    grabber.Position = UDim2.new(1, 0, 0.5, 0)
+    grabber.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    grabber.ZIndex = 8
+    grabber.Parent = fill
+    Instance.new("UICorner", grabber).CornerRadius = UDim.new(1, 0)
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Text = "5"
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 14
+    valueLabel.TextColor3 = Color3.fromRGB(138, 43, 226)
+    valueLabel.Size = UDim2.new(0, 50, 1, 0)
+    valueLabel.Position = UDim2.new(0, 350, 0, 0)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+    valueLabel.ZIndex = 6
+    valueLabel.Parent = frame
+    
+    local TweenService = game:GetService("TweenService")
+    
+    -- Slider logic
+    local dragging = false
+    local function updateSlider(input)
+        local sizeX = barBg.AbsoluteSize.X
+        local relativePos = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / sizeX, 0, 1)
+        
+        -- Map 0-1 to 1-50
+        local value = math.floor(1 + (relativePos * 49))
+        value = math.clamp(value, 1, 50)
+        
+        State.size = value
+        fill.Size = UDim2.new((value - 1) / 49, 0, 1, 0)
+        valueLabel.Text = tostring(value)
+        
+        updateAllHitboxes()
+    end
+    
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    fill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    grabber.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    game:GetService("UserInputService").InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 18, 0, 18)}):Play()
+        end
+    end)
+    
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input)
+        end
+    end)
+end
+
+-- Body Trans Slider (0.1 - 0.9)
+do
+    local transparencyValues = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}
+    local transparencyLabels = {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9"}
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 60)
+    frame.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 5
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Text = "Body Trans"
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 14
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
+    label.Size = UDim2.new(0, 120, 1, 0)
+    label.Position = UDim2.new(0, 15, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 6
+    label.Parent = frame
+    
+    -- Slider
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(0, 200, 0, 12)
+    barBg.Position = UDim2.new(0, 140, 0, 24)
+    barBg.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    barBg.BorderSizePixel = 0
+    barBg.ZIndex = 6
+    barBg.Parent = frame
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(1, 0, 1, 0)  -- 0.9 = index 9, which is 8/8 = 1.0
+    fill.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 7
+    fill.Parent = barBg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    
+    local grabber = Instance.new("Frame")
+    grabber.Size = UDim2.new(0, 18, 0, 18)
+    grabber.AnchorPoint = Vector2.new(0.5, 0.5)
+    grabber.Position = UDim2.new(1, 0, 0.5, 0)
+    grabber.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    grabber.ZIndex = 8
+    grabber.Parent = fill
+    Instance.new("UICorner", grabber).CornerRadius = UDim.new(1, 0)
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Text = "0.9"
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 14
+    valueLabel.TextColor3 = Color3.fromRGB(138, 43, 226)
+    valueLabel.Size = UDim2.new(0, 50, 0, 30)
+    valueLabel.Position = UDim2.new(0, 350, 0, 15)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+    valueLabel.ZIndex = 6
+    valueLabel.Parent = frame
+    
+    local TweenService = game:GetService("TweenService")
+    
+    -- Slider logic
+    local dragging = false
+    local function updateSlider(input)
+        local sizeX = barBg.AbsoluteSize.X
+        local relativePos = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / sizeX, 0, 1)
+        
+        local step = math.floor(relativePos * 8 + 0.5) / 8
+        local index = math.floor(step * 8) + 1
+        index = math.clamp(index, 1, 9)
+        
+        State.transparency = transparencyValues[index]
+        fill.Size = UDim2.new(step, 0, 1, 0)
+        valueLabel.Text = transparencyLabels[index]
+        
+        updateAllHitboxes()
+    end
+    
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    fill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    grabber.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    game:GetService("UserInputService").InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 18, 0, 18)}):Play()
+        end
+    end)
+    
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input)
+        end
+    end)
+end
+
+print("✓ Aegis Hitbox Module Loaded")
+
+return true

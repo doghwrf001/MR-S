@@ -1,0 +1,337 @@
+--==============================================================================
+--                    AEGIS HUB - AUTO COLLECTION CRATES
+--==============================================================================
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.AutoCollection then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local page = AegisHub.AutoCollection
+local Library = AegisHub.Library
+
+-- Crate Configurations
+local CRATE_CONFIGS = {
+    Battery = {
+        crateName = "BatteryCrate",
+        itemName = "Fedoratomic Battery",
+        color = Color3.fromRGB(255, 200, 50)  -- Yellow
+    },
+    Credit = {
+        crateName = "CreditCrate",
+        itemName = "Credit",
+        color = Color3.fromRGB(100, 255, 100)  -- Green
+    },
+    Randomised = {
+        crateName = "RandomisedCrate",
+        itemName = "Randomised Item",
+        color = Color3.fromRGB(255, 100, 255)  -- Purple
+    }
+}
+
+local FINAL_TELEPORT = CFrame.new(-125, 5, -791)
+local WAIT_TIME = 0.3
+local ATTEMPT_TIMEOUT = 1.6
+local BETWEEN_CRATES_WAIT = 0.2
+
+-- State
+local State = {
+    isCollecting = false,
+    originalPosition = nil,
+    originalZoom = nil,
+    originalCameraType = nil,
+    aimConnection = nil,
+    stopRequested = false
+}
+
+-- Get item count in backpack
+local function getItemCount(itemName)
+    local backpack = player:WaitForChild("Backpack")
+    local count = 0
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item.Name == itemName then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- Find all crates of a specific type
+local function findCrates(crateName)
+    local crates = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj.Name == crateName then
+            local holder = obj:FindFirstChild("ProximityHolder", true)
+            if holder then
+                local prompt = holder:FindFirstChildOfClass("ProximityPrompt")
+                if prompt then
+                    table.insert(crates, {
+                        holder = holder,
+                        prompt = prompt
+                    })
+                end
+            end
+        end
+    end
+    return crates
+end
+
+-- Aim camera at target
+local function aimCameraAt(part)
+    if State.aimConnection then
+        State.aimConnection:Disconnect()
+    end
+    
+    local camera = workspace.CurrentCamera
+    camera.CameraType = Enum.CameraType.Scriptable
+    
+    State.aimConnection = RunService.RenderStepped:Connect(function()
+        if part and part.Parent then
+            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, part.Position)
+        end
+    end)
+end
+
+-- Release camera control
+local function releaseCamera()
+    if State.aimConnection then
+        State.aimConnection:Disconnect()
+        State.aimConnection = nil
+    end
+    
+    if State.originalCameraType then
+        workspace.CurrentCamera.CameraType = State.originalCameraType
+    end
+end
+
+-- Attempt to collect a single crate
+local function attemptCrate(crateData, itemName)
+    if State.stopRequested then return false end
+    
+    local holder = crateData.holder
+    local prompt = crateData.prompt
+    
+    if not holder or not prompt then return false end
+    
+    local character = player.Character
+    if not character then return false end
+    
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    
+    -- Teleport to crate
+    hrp.CFrame = holder.CFrame + Vector3.new(0, 3, 0)
+    task.wait(WAIT_TIME)
+    
+    if State.stopRequested then return false end
+    
+    -- Aim camera at holder
+    local camera = workspace.CurrentCamera
+    camera.CFrame = CFrame.new(hrp.Position, holder.Position)
+    aimCameraAt(holder)
+    
+    -- Setup prompt
+    prompt.HoldDuration = 0.1
+    
+    -- Track collection
+    local startCount = getItemCount(itemName)
+    local triggered = false
+    
+    local conn = prompt.Triggered:Connect(function(p)
+        if p == player then
+            triggered = true
+        end
+    end)
+    
+    -- Fire prompt
+    fireproximityprompt(prompt, 0.5)
+    
+    -- Wait for collection
+    local startTime = os.clock()
+    while os.clock() - startTime < ATTEMPT_TIMEOUT do
+        if State.stopRequested then
+            conn:Disconnect()
+            releaseCamera()
+            return false
+        end
+        
+        if triggered then break end
+        if getItemCount(itemName) > startCount then break end
+        
+        task.wait(0.1)
+    end
+    
+    conn:Disconnect()
+    releaseCamera()
+    
+    return true
+end
+
+-- Restore original state
+local function restoreOriginalState()
+    local character = player.Character
+    if character then
+        local humanoid = character:FindFirstChild("Humanoid")
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        
+        if humanoid then
+            humanoid.AutoRotate = true
+            humanoid.CameraOffset = Vector3.zero
+        end
+        
+        -- Restore position
+        if hrp and State.originalPosition then
+            hrp.CFrame = State.originalPosition
+        end
+    end
+    
+    -- Restore camera
+    if State.originalZoom then
+        player.CameraMaxZoomDistance = State.originalZoom
+    end
+    
+    releaseCamera()
+    
+    print("✓ Restored to original position")
+end
+
+-- Collect specific crate type
+local function collectCrates(crateType)
+    if State.isCollecting then
+        print("⚠ Already collecting!")
+        return
+    end
+    
+    State.isCollecting = true
+    State.stopRequested = false
+    
+    local config = CRATE_CONFIGS[crateType]
+    if not config then
+        print("⚠ Invalid crate type!")
+        State.isCollecting = false
+        return
+    end
+    
+    print("✓ Starting " .. crateType .. " crate collection...")
+    
+    -- Save original state
+    local character = player.Character
+    if not character then
+        print("⚠ Character not found!")
+        State.isCollecting = false
+        return
+    end
+    
+    local humanoid = character:FindFirstChild("Humanoid")
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    
+    if not humanoid or not hrp then
+        print("⚠ Character components missing!")
+        State.isCollecting = false
+        return
+    end
+    
+    State.originalPosition = hrp.CFrame
+    State.originalZoom = player.CameraMaxZoomDistance
+    State.originalCameraType = workspace.CurrentCamera.CameraType
+    
+    -- Setup camera
+    player.CameraMaxZoomDistance = 0.5
+    humanoid.CameraOffset = Vector3.zero
+    humanoid.AutoRotate = false
+    
+    -- Find crates
+    local crates = findCrates(config.crateName)
+    print("✓ Found " .. #crates .. " " .. crateType .. " crates")
+    
+    -- Collect each crate
+    local collected = 0
+    for i, crate in ipairs(crates) do
+        if State.stopRequested then
+            print("⚠ Collection stopped by user")
+            break
+        end
+        
+        local success = attemptCrate(crate, config.itemName)
+        if success then
+            collected = collected + 1
+        end
+        
+        if i < #crates and not State.stopRequested then
+            task.wait(BETWEEN_CRATES_WAIT)
+        end
+    end
+    
+    print("✓ Collected " .. collected .. "/" .. #crates .. " " .. crateType .. " crates")
+    
+    -- Restore or teleport
+    if State.stopRequested then
+        restoreOriginalState()
+    else
+        -- Only teleport to final position if completed normally
+        if hrp then
+            hrp.CFrame = FINAL_TELEPORT
+        end
+        
+        humanoid.AutoRotate = true
+        player.CameraMaxZoomDistance = State.originalZoom
+        releaseCamera()
+    end
+    
+    State.isCollecting = false
+    State.stopRequested = false
+end
+
+-- Stop collection
+local function stopCollection()
+    if State.isCollecting then
+        State.stopRequested = true
+        print("✓ Stopping collection...")
+    end
+end
+
+--==============================================================================
+--                          CREATE UI
+--==============================================================================
+
+-- Battery Crates
+Library:CreateToggle(page, "Collect Battery Crates", false, function(enabled)
+    if enabled then
+        task.spawn(function()
+            collectCrates("Battery")
+        end)
+    else
+        stopCollection()
+    end
+end)
+
+-- Credit Crates
+Library:CreateToggle(page, "Collect Credit Crates", false, function(enabled)
+    if enabled then
+        task.spawn(function()
+            collectCrates("Credit")
+        end)
+    else
+        stopCollection()
+    end
+end)
+
+-- Randomised Crates
+Library:CreateToggle(page, "Collect Randomised Crates", false, function(enabled)
+    if enabled then
+        task.spawn(function()
+            collectCrates("Randomised")
+        end)
+    else
+        stopCollection()
+    end
+end)
+
+print("✓ Auto Collection Crates Module Loaded")
+
+return true

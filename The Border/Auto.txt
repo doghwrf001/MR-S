@@ -1,0 +1,527 @@
+--==============================================================================
+--                    AEGIS HUB - TROLLING AUTO MODULE (CLEAN)
+--==============================================================================
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.TrollingAuto then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local page = AegisHub.TrollingAuto
+local Library = AegisHub.Library
+
+--==============================================================================
+--                          1. OPEN DOORS (HITBOX ARM)
+--==============================================================================
+
+local openDoorsState = {
+    running = false,
+    connection = nil,
+    hitboxes = {},
+    originalPositions = {},
+    offset = 0,
+    direction = 1
+}
+
+local function startOpenDoors()
+    if openDoorsState.running then return end
+    openDoorsState.running = true
+    
+    -- Auto-equip Keypad Cracker if available
+    local character = player.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local backpack = player:FindFirstChild("Backpack")
+        
+        if humanoid and backpack then
+            local keypadCracker = backpack:FindFirstChild("Keypad Cracker")
+            if keypadCracker and keypadCracker:IsA("Tool") then
+                humanoid:EquipTool(keypadCracker)
+                task.wait(0.3)
+                print("✓ Keypad Cracker equipped")
+            end
+        end
+    end
+    
+    local doors = workspace:WaitForChild("Doors")
+    
+    local doorFolders = {
+        "AED", "ARD", "ARD_Offices", "Armoury", "Central/Processing",
+        "Coolant", "Divisional", "HR/SC", "Hangar", "Jail",
+        "Lab_Wasteland_A", "Processing", "Reactor", "Roof",
+        "SpawnedMisc", "Tower/Posts", "Warehouse"
+    }
+    
+    openDoorsState.hitboxes = {}
+    openDoorsState.originalPositions = {}
+    for _, folderName in pairs(doorFolders) do
+        local folder = doors:FindFirstChild(folderName)
+        if folder then
+            for _, descendant in pairs(folder:GetDescendants()) do
+                if descendant.Name == "Hitbox" and descendant:IsA("BasePart") then
+                    table.insert(openDoorsState.hitboxes, descendant)
+                    openDoorsState.originalPositions[descendant] = descendant.CFrame
+                end
+            end
+        end
+    end
+    
+    openDoorsState.offset = 0
+    openDoorsState.direction = 1
+    local speed = 2
+    local maxOffset = 2
+    
+    openDoorsState.connection = RunService.RenderStepped:Connect(function()
+        if not openDoorsState.running then return end
+        
+        local character = player.Character
+        if not character or not character.Parent then return end
+        
+        local rightArm = character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm")
+        if not rightArm then return end
+        
+        openDoorsState.offset = openDoorsState.offset + (openDoorsState.direction * speed)
+        
+        if openDoorsState.offset >= maxOffset then
+            openDoorsState.direction = -1
+        elseif openDoorsState.offset <= -maxOffset then
+            openDoorsState.direction = 1
+        end
+        
+        local rightArmTip = rightArm.CFrame * CFrame.new(0, -rightArm.Size.Y/2, 0)
+        
+        for _, hitbox in pairs(openDoorsState.hitboxes) do
+            if hitbox and hitbox.Parent then
+                hitbox.CFrame = rightArmTip * CFrame.new(0, openDoorsState.offset, 0)
+            end
+        end
+    end)
+    
+    print("✓ Open All Doors started")
+end
+
+local function stopOpenDoors()
+    openDoorsState.running = false
+    if openDoorsState.connection then
+        openDoorsState.connection:Disconnect()
+        openDoorsState.connection = nil
+    end
+    
+    for hitbox, originalCF in pairs(openDoorsState.originalPositions) do
+        if hitbox and hitbox.Parent then
+            pcall(function()
+                hitbox.CFrame = originalCF
+            end)
+        end
+    end
+    
+    openDoorsState.hitboxes = {}
+    openDoorsState.originalPositions = {}
+    openDoorsState.offset = 0
+    openDoorsState.direction = 1
+    
+    print("✓ Open All Doors stopped")
+end
+
+--==============================================================================
+--                          2. AUTO BOOTH PROCESSING
+--==============================================================================
+
+local boothState = {
+    running = false,
+    cachedParts = {},
+    lastCacheTime = 0
+}
+
+local function getAllProcessingBoothSystems()
+    local ROOT = workspace:FindFirstChild("Booths")
+    if not ROOT then return {} end
+    
+    local systems = {}
+    for _, obj in ipairs(ROOT:GetDescendants()) do
+        if obj.Name == "Processing_BoothSystem" then
+            table.insert(systems, obj)
+        end
+    end
+    return systems
+end
+
+local function getTouchPartsUnderSystems()
+    local currentTime = tick()
+    
+    if currentTime - boothState.lastCacheTime < 5 and #boothState.cachedParts > 0 then
+        return boothState.cachedParts
+    end
+    
+    local parts = {}
+    local seen = {}
+    
+    for _, sys in ipairs(getAllProcessingBoothSystems()) do
+        for _, d in ipairs(sys:GetDescendants()) do
+            if d:IsA("TouchTransmitter") then
+                local part = d.Parent
+                if part and part:IsA("BasePart") and not seen[part] then
+                    seen[part] = true
+                    table.insert(parts, part)
+                end
+            end
+        end
+    end
+    
+    boothState.cachedParts = parts
+    boothState.lastCacheTime = currentTime
+    
+    return parts
+end
+
+local function startAutoBoothProcessing()
+    if boothState.running then return end
+    boothState.running = true
+    
+    task.spawn(function()
+        while boothState.running do
+            local character = player.Character
+            if character and character.Parent then
+                local hrp = character:FindFirstChild("HumanoidRootPart")
+                
+                if hrp then
+                    local parts = getTouchPartsUnderSystems()
+                    
+                    for _, part in ipairs(parts) do
+                        if not boothState.running then break end
+                        
+                        pcall(function()
+                            if part and part.Parent then
+                                firetouchinterest(hrp, part, 0)
+                                task.wait(0.01)
+                                firetouchinterest(hrp, part, 1)
+                            end
+                        end)
+                    end
+                end
+            end
+            
+            task.wait(0.5)
+        end
+    end)
+    
+    print("✓ Booth Processing Notification started")
+end
+
+local function stopAutoBoothProcessing()
+    boothState.running = false
+    print("✓ Booth Processing Notification stopped")
+end
+
+player.CharacterAdded:Connect(function()
+    boothState.cachedParts = {}
+    boothState.lastCacheTime = 0
+end)
+
+--==============================================================================
+--                          3. CLOSE DOORS
+--==============================================================================
+
+local closeDoorsState = {
+    running = false,
+    connection = nil,
+    clickDetectors = {},
+    timer = 0
+}
+
+local function startCloseDoors()
+    if closeDoorsState.running then return end
+    closeDoorsState.running = true
+    
+    local doors = workspace:WaitForChild("Doors")
+    
+    closeDoorsState.clickDetectors = {}
+    for _, descendant in pairs(doors:GetDescendants()) do
+        if descendant:IsA("ClickDetector") then
+            table.insert(closeDoorsState.clickDetectors, descendant)
+        end
+    end
+    
+    closeDoorsState.timer = 0
+    local interval = 0.001
+    
+    closeDoorsState.connection = RunService.Heartbeat:Connect(function(deltaTime)
+        if not closeDoorsState.running then return end
+        
+        closeDoorsState.timer = closeDoorsState.timer + deltaTime
+        
+        if closeDoorsState.timer >= interval then
+            closeDoorsState.timer = 0
+            
+            for _, clickDetector in pairs(closeDoorsState.clickDetectors) do
+                if clickDetector and clickDetector.Parent then
+                    pcall(function()
+                        fireclickdetector(clickDetector)
+                    end)
+                end
+            end
+        end
+    end)
+    
+    print("✓ Close All Doors started")
+end
+
+local function stopCloseDoors()
+    closeDoorsState.running = false
+    if closeDoorsState.connection then
+        closeDoorsState.connection:Disconnect()
+        closeDoorsState.connection = nil
+    end
+    closeDoorsState.clickDetectors = {}
+    closeDoorsState.timer = 0
+    print("✓ Close All Doors stopped")
+end
+
+
+--==============================================================================
+--                          4. GET KEYPAD CRACKER
+--==============================================================================
+
+local getKeypadCrackerScript = [[
+local Players = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local moneyValue = player:WaitForChild("stats"):WaitForChild("Money")
+local TARGET_POSITION = Vector3.new(-159, 4, -787)
+local scrapGenerators = {}
+local function findScrapGenerators()
+    local mapElements = workspace:WaitForChild("CoreGameplaySystems"):WaitForChild("ScrapSystems"):WaitForChild("MapElements")
+    for _, child in pairs(mapElements:GetChildren()) do
+        if string.find(child.Name, "Scrap_Generate") then table.insert(scrapGenerators, child) end
+    end
+end
+findScrapGenerators()
+local currentScrapIndex = 1
+local function teleportTo(position) if humanoidRootPart then humanoidRootPart.CFrame = CFrame.new(position) end end
+local function holdEKey(duration) VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game) task.wait(duration) VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game) end
+local function isScrapCollected(scrapGenerate) if scrapGenerate:IsA("BasePart") then return scrapGenerate.Transparency == 1 elseif scrapGenerate:FindFirstChildWhichIsA("BasePart", true) then local part = scrapGenerate:FindFirstChildWhichIsA("BasePart", true) if part then return part.Transparency == 1 end end return false end
+local function getResourceTransparency(resource) if resource:IsA("BasePart") then return resource.Transparency elseif resource:FindFirstChildWhichIsA("BasePart", true) then local part = resource:FindFirstChildWhichIsA("BasePart", true) return part.Transparency end return 1 end
+local function countResourcesInBackpack() local count = 0 for _, item in pairs(player.Backpack:GetChildren()) do if item.Name == "Resource" then count = count + 1 end end return count end
+task.spawn(function() while true do task.wait(0.05) if moneyValue.Value < 25 then if currentScrapIndex > #scrapGenerators then currentScrapIndex = 1 task.wait(1) end local scrapGenerate = scrapGenerators[currentScrapIndex] if isScrapCollected(scrapGenerate) then currentScrapIndex = currentScrapIndex + 1 task.wait(0.05) continue end teleportTo(scrapGenerate.Position) task.wait(0.05) if scrapGenerate:FindFirstChildOfClass("ProximityPrompt") then scrapGenerate:FindFirstChildOfClass("ProximityPrompt").HoldDuration = 0.00001 end local startTime = tick() while not isScrapCollected(scrapGenerate) and (tick() - startTime) < 1 do if moneyValue.Value >= 25 then break end holdEKey(0.3) task.wait(0.02) end currentScrapIndex = currentScrapIndex + 1 task.wait(0.1) else teleportTo(TARGET_POSITION) task.wait(0.1) while not player.Backpack:FindFirstChild("Pickaxe") do game:GetService("ReplicatedStorage"):WaitForChild("MERCHANT"):WaitForChild("MClientCommunication"):FireServer("Pickaxe", "LINKON_CS") task.wait(0.05) if character:FindFirstChild("Pickaxe") then break end end local pickaxe = player.Backpack:FindFirstChild("Pickaxe") if pickaxe then humanoidRootPart.Parent:FindFirstChildOfClass("Humanoid"):EquipTool(pickaxe) task.wait(0.2) end local oreSystem = workspace:WaitForChild("CoreGameplaySystems"):WaitForChild("OreSystems") local allResources = {} for _, oreFolder in pairs(oreSystem:GetChildren()) do if oreFolder.Name == "Diamond" and oreFolder:FindFirstChild("Resources") then for _, resource in pairs(oreFolder.Resources:GetChildren()) do table.insert(allResources, resource) end end end local currentResourceIndex = 1 local cycleAttempts = 0 while countResourcesInBackpack() < 2 do if currentResourceIndex > #allResources then cycleAttempts = cycleAttempts + 1 if cycleAttempts >= 3 then task.wait(5) cycleAttempts = 0 allResources = {} for _, oreFolder in pairs(oreSystem:GetChildren()) do if oreFolder.Name == "Diamond" and oreFolder:FindFirstChild("Resources") then for _, resource in pairs(oreFolder.Resources:GetChildren()) do table.insert(allResources, resource) end end end end currentResourceIndex = 1 task.wait(1) end local currentResource = allResources[currentResourceIndex] if getResourceTransparency(currentResource) >= 1 then currentResourceIndex = currentResourceIndex + 1 task.wait(0.02) continue end if currentResource:IsA("BasePart") then teleportTo(currentResource.Position) elseif currentResource:FindFirstChildWhichIsA("BasePart", true) then teleportTo(currentResource:FindFirstChildWhichIsA("BasePart", true).Position) end task.wait(0.1) local prompt = currentResource:FindFirstChildOfClass("ProximityPrompt", true) if prompt then prompt.HoldDuration = 0.00001 end local miningStartTime = tick() local initialResourceCount = countResourcesInBackpack() while getResourceTransparency(currentResource) < 1 and (tick() - miningStartTime) < 15 do holdEKey(0.15) task.wait(0.05) if countResourcesInBackpack() > initialResourceCount or countResourcesInBackpack() >= 2 then break end end currentResourceIndex = currentResourceIndex + 1 task.wait(0.1) end teleportTo(Vector3.new(313, 24, -571)) task.wait(2) teleportTo(TARGET_POSITION) task.wait(0.2) while not player.Backpack:FindFirstChild("Keypad Cracker") do game:GetService("ReplicatedStorage"):WaitForChild("MERCHANT"):WaitForChild("MClientCommunication"):FireServer("Keypad Cracker", "BARTON_EC") task.wait(0.1) if character:FindFirstChild("Keypad Cracker") then break end end break end end end)
+]]
+
+local function startGetKeypadCracker()
+    task.spawn(function()
+        pcall(function() loadstring(getKeypadCrackerScript)() end)
+    end)
+    print("✓ Get Keypad Cracker started")
+end
+
+--==============================================================================
+--                          5. X-RAY WALLS
+--==============================================================================
+
+local xrayState = { enabled = false, originalTransparency = {} }
+
+local function enableXray()
+    xrayState.originalTransparency = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local isPlayerPart = false
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr.Character and obj:IsDescendantOf(plr.Character) then
+                    isPlayerPart = true
+                    break
+                end
+            end
+            if not isPlayerPart then
+                local name = obj.Name:lower()
+                if name:find("wall") or name == "part" or name == "wedge" then
+                    xrayState.originalTransparency[obj] = obj.Transparency
+                    obj.Transparency = 0.7
+                end
+            end
+        end
+    end
+    print("✓ X-Ray enabled")
+end
+
+local function disableXray()
+    for obj, originalTrans in pairs(xrayState.originalTransparency) do
+        if obj and obj.Parent then pcall(function() obj.Transparency = originalTrans end) end
+    end
+    xrayState.originalTransparency = {}
+    print("✓ X-Ray disabled")
+end
+
+--==============================================================================
+--                          6. TELEPORT TO BORDER
+--==============================================================================
+
+local teleportBorderState = { lastTeleport = 0 }
+
+local function teleportToBorder()
+    if tick() - teleportBorderState.lastTeleport < 1 then return end
+    
+    -- Remove object first
+    local targetPos = Vector3.new(-42.6979485, 57.364994, 219.574814)
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and (obj.Position - targetPos).Magnitude < 0.5 then
+            pcall(function() obj:Destroy() end)
+        end
+    end
+    
+    -- Then teleport
+    local character = player.Character
+    if character then
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = CFrame.new(-42, 54, 220)
+            teleportBorderState.lastTeleport = tick()
+            print("✓ Teleported to border")
+        end
+    end
+end
+
+
+--==============================================================================
+--                          CREATE UI
+--==============================================================================
+
+-- 1. Get Keypad Cracker
+do
+    local button = Instance.new("TextButton")
+    button.Text = ""
+    button.Size = UDim2.new(1, 0, 0, 45)
+    button.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    button.BorderSizePixel = 0
+    button.AutoButtonColor = false
+    button.ZIndex = 3
+    button.Parent = page
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 8)
+    
+    local label = Instance.new("TextLabel")
+    label.Text = "Get Keypad Cracker"
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.Size = UDim2.new(1, -80, 1, 0)
+    label.Position = UDim2.new(0, 15, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 4
+    label.Parent = button
+    
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Text = "CLICK"
+    statusLabel.Font = Enum.Font.GothamBold
+    statusLabel.TextSize = 12
+    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    statusLabel.Size = UDim2.new(0, 70, 1, 0)
+    statusLabel.Position = UDim2.new(1, -80, 0, 0)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+    statusLabel.ZIndex = 4
+    statusLabel.Parent = button
+    
+    local canClick = true
+    local TweenService = game:GetService("TweenService")
+    button.MouseEnter:Connect(function() if canClick then TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(148, 53, 236)}):Play() end end)
+    button.MouseLeave:Connect(function() if canClick then TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(138, 43, 226)}):Play() end end)
+    button.MouseButton1Click:Connect(function()
+        if not canClick then return end
+        canClick = false
+        statusLabel.Text = "RUNNING"
+        TweenService:Create(button, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(34, 153, 84)}):Play()
+        startGetKeypadCracker()
+        task.delay(10, function()
+            canClick = true
+            statusLabel.Text = "CLICK"
+            TweenService:Create(button, TweenInfo.new(0.3), {BackgroundColor3 = Color3.fromRGB(138, 43, 226)}):Play()
+        end)
+    end)
+end
+
+-- 2. Open All Doors
+Library:CreateToggle(page, "Open All Doors", false, function(enabled)
+    if enabled then startOpenDoors() else stopOpenDoors() end
+end)
+
+-- 3. Close All Doors
+Library:CreateToggle(page, "Close All Doors", false, function(enabled)
+    if enabled then startCloseDoors() else stopCloseDoors() end
+end)
+
+-- 4. Booth Processing Notification
+Library:CreateToggle(page, "Booth Processing Notification", false, function(enabled)
+    if enabled then startAutoBoothProcessing() else stopAutoBoothProcessing() end
+end)
+
+-- Spacer
+do
+    local spacer = Instance.new("Frame")
+    spacer.Size = UDim2.new(1, 0, 0, 15)
+    spacer.BackgroundTransparency = 1
+    spacer.Parent = page
+end
+
+-- Small buttons container at bottom
+do
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, 0, 0, 30)
+    container.BackgroundTransparency = 1
+    container.Parent = page
+    
+    local TweenService = game:GetService("TweenService")
+    
+    -- X-Ray Walls (small button)
+    local xrayButton = Instance.new("TextButton")
+    xrayButton.Text = "X-Ray"
+    xrayButton.Font = Enum.Font.GothamBold
+    xrayButton.TextSize = 10
+    xrayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    xrayButton.Size = UDim2.new(0.48, 0, 1, 0)
+    xrayButton.Position = UDim2.new(0, 0, 0, 0)
+    xrayButton.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    xrayButton.BorderSizePixel = 0
+    xrayButton.AutoButtonColor = false
+    xrayButton.ZIndex = 3
+    xrayButton.Parent = container
+    Instance.new("UICorner", xrayButton).CornerRadius = UDim.new(0, 6)
+    
+    local xrayEnabled = false
+    xrayButton.MouseButton1Click:Connect(function()
+        xrayEnabled = not xrayEnabled
+        if xrayEnabled then
+            enableXray()
+            TweenService:Create(xrayButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(138, 43, 226)}):Play()
+        else
+            disableXray()
+            TweenService:Create(xrayButton, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(40, 40, 45)}):Play()
+        end
+    end)
+    
+    -- Teleport To Border (small button)
+    local tpButton = Instance.new("TextButton")
+    tpButton.Text = "TP Border"
+    tpButton.Font = Enum.Font.GothamBold
+    tpButton.TextSize = 10
+    tpButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tpButton.Size = UDim2.new(0.48, 0, 1, 0)
+    tpButton.Position = UDim2.new(0.52, 0, 0, 0)
+    tpButton.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    tpButton.BorderSizePixel = 0
+    tpButton.AutoButtonColor = false
+    tpButton.ZIndex = 3
+    tpButton.Parent = container
+    Instance.new("UICorner", tpButton).CornerRadius = UDim.new(0, 6)
+    
+    tpButton.MouseButton1Click:Connect(function()
+        teleportToBorder()
+    end)
+end
+
+print("✓ Trolling Auto Module Loaded")
+return true

@@ -1,0 +1,651 @@
+--==============================================================================
+--                    AEGIS HUB - MOVEMENT MODULE (FIXED)
+--==============================================================================
+-- PRESETS - Customize default values here
+local PRESETS = {
+    SPEED = {
+        DEFAULT = 200,
+        MIN = 1,
+        MAX = 500
+    },
+    JUMP = {
+        DEFAULT = 200,
+        MIN = 1,
+        MAX = 500
+    },
+    CFRAME_FLY = {
+        DEFAULT = 200,
+        MIN = 1,
+        MAX = 500
+    }
+}
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.MovementPage then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local page = AegisHub.MovementPage
+local Library = AegisHub.Library  -- FIX: Get Library from AegisHub
+
+-- State
+local State = {
+    speedEnabled = false,
+    speedValue = PRESETS.SPEED.DEFAULT,
+    origWalkSpeed = nil,
+    speedEnforcementConn = nil,
+    
+    jumpEnabled = false,
+    jumpValue = PRESETS.JUMP.DEFAULT,
+    origJumpHeight = nil,
+    origJumpPower = nil,
+    
+    infJumpEnabled = false,
+    
+    cframeFlyEnabled = false,
+    cframeFlySpeed = PRESETS.CFRAME_FLY.DEFAULT,
+    cframeFlyConn = nil,
+    cframeFlyKeys = {W = false, A = false, S = false, D = false, Q = false, E = false, Shift = false},
+    cframeFlyHotkey = nil,  -- No default hotkey
+    
+    godModeEnabled = false,
+    godModeConn = nil,
+    
+    capturingHotkey = false,
+    
+    connections = {}
+}
+
+-- Helper functions
+local function getChar() return player.Character end
+local function getHumanoid() local c = getChar() return c and c:FindFirstChildOfClass("Humanoid") end
+local function getHRP() local c = getChar() return c and c:FindFirstChild("HumanoidRootPart") end
+
+-- Instant Movement Physics
+local function applyInstantMovement(hum)
+    if not hum then return end
+    pcall(function()
+        local char = hum.Parent
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0, 0, 100, 0)
+            end
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    pcall(function()
+                        part.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0, 0, 100, 0)
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+local function removeInstantMovement(hum)
+    if not hum then return end
+    pcall(function()
+        local char = hum.Parent
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    pcall(function()
+                        part.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.3, 0.5, 1, 1)
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+-- Speed
+local function enableSpeed()
+    local hum = getHumanoid()
+    if hum then
+        if not State.origWalkSpeed then 
+            State.origWalkSpeed = hum.WalkSpeed 
+        end
+        hum.WalkSpeed = State.speedValue
+        applyInstantMovement(hum)
+    end
+    
+    -- Start continuous enforcement
+    if State.speedEnforcementConn then State.speedEnforcementConn:Disconnect() end
+    State.speedEnforcementConn = RunService.Heartbeat:Connect(function()
+        if not State.speedEnabled then return end
+        local hum = getHumanoid()
+        if hum and hum.WalkSpeed ~= State.speedValue then
+            hum.WalkSpeed = State.speedValue
+        end
+    end)
+    table.insert(State.connections, State.speedEnforcementConn)
+end
+
+local function disableSpeed()
+    if State.speedEnforcementConn then
+        State.speedEnforcementConn:Disconnect()
+        State.speedEnforcementConn = nil
+    end
+    
+    local hum = getHumanoid()
+    if hum then
+        hum.WalkSpeed = State.origWalkSpeed or 16
+        removeInstantMovement(hum)
+    end
+end
+
+-- Jump
+local function enableJump()
+    local hum = getHumanoid()
+    if hum then
+        if hum.UseJumpPower then
+            if not State.origJumpPower then 
+                State.origJumpPower = hum.JumpPower 
+            end
+            hum.JumpPower = State.jumpValue
+        else
+            if not State.origJumpHeight then 
+                State.origJumpHeight = hum.JumpHeight 
+            end
+            hum.JumpHeight = State.jumpValue
+        end
+    end
+end
+
+local function disableJump()
+    local hum = getHumanoid()
+    if hum then
+        if hum.UseJumpPower then 
+            hum.JumpPower = State.origJumpPower or 50
+        else 
+            hum.JumpHeight = State.origJumpHeight or 7.2 
+        end
+    end
+end
+
+-- Infinite Jump
+table.insert(State.connections, UserInputService.JumpRequest:Connect(function()
+    if State.infJumpEnabled then
+        local hum = getHumanoid()
+        if hum then 
+            hum:ChangeState(Enum.HumanoidStateType.Jumping) 
+        end
+    end
+end))
+
+-- CFrame Fly
+local function setCFrameFlyKey(keyCode, isDown)
+    local map = {
+        [Enum.KeyCode.W] = "W", [Enum.KeyCode.A] = "A", 
+        [Enum.KeyCode.S] = "S", [Enum.KeyCode.D] = "D",
+        [Enum.KeyCode.Q] = "Q", [Enum.KeyCode.E] = "E",
+        [Enum.KeyCode.LeftShift] = "Shift", [Enum.KeyCode.RightShift] = "Shift"
+    }
+    if map[keyCode] then 
+        State.cframeFlyKeys[map[keyCode]] = isDown 
+    end
+end
+
+table.insert(State.connections, UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        setCFrameFlyKey(input.KeyCode, true)
+    end
+end))
+
+table.insert(State.connections, UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        setCFrameFlyKey(input.KeyCode, false)
+    end
+end))
+
+local function enableCFrameFly()
+    local hrp = getHRP()
+    if hrp then
+        hrp.Anchored = true
+    end
+    
+    State.cframeFlyConn = RunService.RenderStepped:Connect(function(dt)
+        if not State.cframeFlyEnabled then return end
+        
+        local hrp = getHRP()
+        if not hrp then return end
+        
+        hrp.Anchored = true
+        
+        local cam = Workspace.CurrentCamera
+        local look = cam and cam.CFrame.LookVector or hrp.CFrame.LookVector
+        local right = cam and cam.CFrame.RightVector or hrp.CFrame.RightVector
+        local up = Vector3.new(0, 1, 0)
+        local moveDir = Vector3.zero
+        
+        if State.cframeFlyKeys.W then moveDir = moveDir + look end
+        if State.cframeFlyKeys.S then moveDir = moveDir - look end
+        if State.cframeFlyKeys.A then moveDir = moveDir - right end
+        if State.cframeFlyKeys.D then moveDir = moveDir + right end
+        if State.cframeFlyKeys.E then moveDir = moveDir + up end
+        if State.cframeFlyKeys.Q then moveDir = moveDir - up end
+        
+        if moveDir.Magnitude > 0 then
+            local speed = State.cframeFlySpeed * (State.cframeFlyKeys.Shift and 2 or 1)
+            hrp.CFrame = hrp.CFrame + moveDir.Unit * speed * dt
+        end
+    end)
+    
+    table.insert(State.connections, State.cframeFlyConn)
+end
+
+local function disableCFrameFly()
+    if State.cframeFlyConn then
+        State.cframeFlyConn:Disconnect()
+        State.cframeFlyConn = nil
+    end
+    
+    local hrp = getHRP()
+    if hrp then
+        hrp.Anchored = false
+    end
+end
+
+-- God Mode (Infinite Health + Instant Respawn at Death Location)
+local deathConnection = nil
+local characterAddedConnection = nil
+local deathPos = nil
+
+local function enableGodMode()
+    -- Set initial infinite health
+    local hum = getHumanoid()
+    if hum then
+        hum.MaxHealth = math.huge
+        hum.Health = math.huge
+    end
+    
+    -- Infinite health loop (prevents death) + store position every frame
+    State.godModeConn = RunService.Heartbeat:Connect(function()
+        if not State.godModeEnabled then return end
+        
+        local hum = getHumanoid()
+        if hum then
+            hum.MaxHealth = math.huge
+            hum.Health = math.huge
+        end
+        
+        -- Store position every frame
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            deathPos = player.Character.HumanoidRootPart.CFrame
+        end
+    end)
+    
+    table.insert(State.connections, State.godModeConn)
+    
+    -- Death handler as backup (instant respawn at death location)
+    local function setupDeathHandler(character)
+        if deathConnection then
+            deathConnection:Disconnect()
+        end
+        
+        local hum = character:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        
+        deathConnection = hum.Died:Connect(function()
+            if not State.godModeEnabled then return end
+            
+            print("✓ God Mode: Death detected, respawning...")
+            
+            -- Force instant respawn (no cooldown)
+            task.spawn(function()
+                player:LoadCharacter()
+                
+                -- Wait for character to load
+                repeat task.wait() until player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                
+                -- Teleport back to death location
+                if deathPos then
+                    player.Character.HumanoidRootPart.CFrame = deathPos
+                    print("✓ God Mode: Respawned at saved location")
+                end
+                
+                -- Reset infinite health immediately
+                local newHum = player.Character:FindFirstChildOfClass("Humanoid")
+                if newHum then
+                    newHum.MaxHealth = math.huge
+                    newHum.Health = math.huge
+                end
+                
+                -- Setup handler for new character
+                setupDeathHandler(player.Character)
+            end)
+        end)
+    end
+    
+    -- Setup for current character
+    if player.Character then
+        setupDeathHandler(player.Character)
+    end
+    
+    -- Setup for future characters
+    if characterAddedConnection then
+        characterAddedConnection:Disconnect()
+    end
+    
+    characterAddedConnection = player.CharacterAdded:Connect(function(character)
+        if State.godModeEnabled then
+            -- Set infinite health immediately
+            task.wait(0.1)
+            local hum = character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.MaxHealth = math.huge
+                hum.Health = math.huge
+            end
+            setupDeathHandler(character)
+        end
+    end)
+end
+
+local function disableGodMode()
+    -- Disconnect connections
+    if State.godModeConn then
+        State.godModeConn:Disconnect()
+        State.godModeConn = nil
+    end
+    
+    if deathConnection then
+        deathConnection:Disconnect()
+        deathConnection = nil
+    end
+    
+    if characterAddedConnection then
+        characterAddedConnection:Disconnect()
+        characterAddedConnection = nil
+    end
+    
+    -- Reset health to normal
+    local hum = getHumanoid()
+    if hum then
+        hum.MaxHealth = 100
+        hum.Health = 100
+    end
+end
+
+-- Character respawn handler
+table.insert(State.connections, player.CharacterAdded:Connect(function()
+    task.wait(0.3)
+    
+    if State.speedEnabled then enableSpeed() end
+    if State.jumpEnabled then enableJump() end
+    if State.cframeFlyEnabled then 
+        disableCFrameFly()
+        enableCFrameFly()
+    end
+    if State.godModeEnabled then enableGodMode() end
+end))
+
+-- UI Reference (declared before hotkey handler needs it)
+local cframeFlyToggleRef = nil
+
+-- Hotkey Input Handler
+table.insert(State.connections, UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    
+    -- CFrame Fly Hotkey (only if set)
+    if not State.capturingHotkey and State.cframeFlyHotkey and input.KeyCode == State.cframeFlyHotkey then
+        State.cframeFlyEnabled = not State.cframeFlyEnabled
+        if State.cframeFlyEnabled then
+            enableCFrameFly()
+        else
+            disableCFrameFly()
+        end
+        
+        -- Update toggle visual immediately
+        if cframeFlyToggleRef then
+            cframeFlyToggleRef.setToggle(State.cframeFlyEnabled)
+        end
+    end
+end))
+
+-- Create UI
+-- Speed with Toggle+Slider
+Library:CreateToggleSlider(page, "Speed", PRESETS.SPEED.MIN, PRESETS.SPEED.MAX, PRESETS.SPEED.DEFAULT,
+    function(enabled)
+        State.speedEnabled = enabled
+        if enabled then enableSpeed() else disableSpeed() end
+    end,
+    function(value)
+        State.speedValue = value
+        if State.speedEnabled then
+            local hum = getHumanoid()
+            if hum then hum.WalkSpeed = value end
+        end
+    end
+)
+
+-- Jump Height with Toggle+Slider
+Library:CreateToggleSlider(page, "Jump Height", PRESETS.JUMP.MIN, PRESETS.JUMP.MAX, PRESETS.JUMP.DEFAULT,
+    function(enabled)
+        State.jumpEnabled = enabled
+        if enabled then enableJump() else disableJump() end
+    end,
+    function(value)
+        State.jumpValue = value
+        if State.jumpEnabled then
+            local hum = getHumanoid()
+            if hum then
+                if hum.UseJumpPower then 
+                    hum.JumpPower = value
+                else 
+                    hum.JumpHeight = value 
+                end
+            end
+        end
+    end
+)
+
+-- Infinite Jump (toggle only, no slider needed)
+Library:CreateToggle(page, "Infinite Jump", false, function(v)
+    State.infJumpEnabled = v
+end)
+
+-- CFrame Fly with Hotkey and Slider
+do
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 60)
+    frame.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 5
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Text = "CFrame Fly"
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 14
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
+    label.Size = UDim2.new(0, 120, 1, 0)
+    label.Position = UDim2.new(0, 15, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 6
+    label.Parent = frame
+    
+    -- Slider
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(0, 200, 0, 12)  -- Increased from 140 to 200
+    barBg.Position = UDim2.new(0, 140, 0, 24)
+    barBg.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    barBg.BorderSizePixel = 0
+    barBg.ZIndex = 6
+    barBg.Parent = frame
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0.4, 0, 1, 0)  -- Updated for 200 default
+    fill.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 7
+    fill.Parent = barBg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    
+    local grabber = Instance.new("Frame")
+    grabber.Size = UDim2.new(0, 18, 0, 18)
+    grabber.AnchorPoint = Vector2.new(0.5, 0.5)
+    grabber.Position = UDim2.new(1, 0, 0.5, 0)
+    grabber.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    grabber.ZIndex = 8
+    grabber.Parent = fill
+    Instance.new("UICorner", grabber).CornerRadius = UDim.new(1, 0)
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Text = "200"  -- Updated default
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 14
+    valueLabel.TextColor3 = Color3.fromRGB(138, 43, 226)
+    valueLabel.Size = UDim2.new(0, 50, 0, 30)
+    valueLabel.Position = UDim2.new(0, 350, 0, 15)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+    valueLabel.ZIndex = 6
+    valueLabel.Parent = frame
+    
+    -- Hotkey Button (moved next to toggle)
+    local hotkeyBtn = Instance.new("TextButton")
+    hotkeyBtn.Size = UDim2.new(0, 50, 0, 26)
+    hotkeyBtn.Position = UDim2.new(1, -125, 0.5, -13)  -- Positioned left of toggle
+    hotkeyBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    hotkeyBtn.BorderSizePixel = 0
+    hotkeyBtn.Font = Enum.Font.GothamBold
+    hotkeyBtn.TextSize = 11
+    hotkeyBtn.TextColor3 = Color3.fromRGB(138, 43, 226)
+    hotkeyBtn.Text = State.cframeFlyHotkey and State.cframeFlyHotkey.Name or "None"
+    hotkeyBtn.ZIndex = 6
+    hotkeyBtn.Parent = frame
+    Instance.new("UICorner", hotkeyBtn).CornerRadius = UDim.new(0, 6)
+    
+    hotkeyBtn.MouseButton1Click:Connect(function()
+        State.capturingHotkey = true
+        hotkeyBtn.Text = "..."
+        hotkeyBtn.TextColor3 = Color3.fromRGB(255, 140, 50)
+    end)
+    
+    local hotkeyConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if not State.capturingHotkey then return end
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if input.KeyCode == Enum.KeyCode.Escape then
+            State.capturingHotkey = false
+            hotkeyBtn.Text = State.cframeFlyHotkey and State.cframeFlyHotkey.Name or "None"
+            hotkeyBtn.TextColor3 = Color3.fromRGB(138, 43, 226)
+            return
+        end
+        
+        State.cframeFlyHotkey = input.KeyCode
+        hotkeyBtn.Text = input.KeyCode.Name
+        hotkeyBtn.TextColor3 = Color3.fromRGB(138, 43, 226)
+        State.capturingHotkey = false
+    end)
+    table.insert(State.connections, hotkeyConn)
+    
+    -- Toggle Switch
+    local switch = Instance.new("TextButton")
+    switch.Text = ""
+    switch.Size = UDim2.new(0, 50, 0, 26)
+    switch.Position = UDim2.new(1, -65, 0.5, -13)
+    switch.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    switch.AutoButtonColor = false
+    switch.ZIndex = 6
+    switch.Parent = frame
+    Instance.new("UICorner", switch).CornerRadius = UDim.new(1, 0)
+    
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 20, 0, 20)
+    dot.Position = UDim2.new(0, 3, 0.5, -10)
+    dot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    dot.BorderSizePixel = 0
+    dot.ZIndex = 7
+    dot.Parent = switch
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+    
+    local TweenService = game:GetService("TweenService")
+    
+    switch.MouseButton1Click:Connect(function()
+        State.cframeFlyEnabled = not State.cframeFlyEnabled
+        if State.cframeFlyEnabled then enableCFrameFly() else disableCFrameFly() end
+        
+        local newColor = State.cframeFlyEnabled and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+        local newPos = State.cframeFlyEnabled and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10)
+        TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+        TweenService:Create(dot, TweenInfo.new(0.2), {Position = newPos}):Play()
+    end)
+    
+    cframeFlyToggleRef = {
+        setToggle = function(on)
+            State.cframeFlyEnabled = on
+            local newColor = on and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+            local newPos = on and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10)
+            TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+            TweenService:Create(dot, TweenInfo.new(0.2), {Position = newPos}):Play()
+        end
+    }
+    
+    -- Slider logic
+    local dragging = false
+    local function updateSlider(input)
+        local sizeX = barBg.AbsoluteSize.X
+        local pos = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / sizeX, 0, 1)
+        local value = math.floor(1 + (499 * pos))
+        fill.Size = UDim2.new(pos, 0, 1, 0)
+        valueLabel.Text = tostring(value)
+        State.cframeFlySpeed = value
+    end
+    
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    fill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    grabber.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 18, 0, 18)}):Play()
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input)
+        end
+    end)
+end
+
+-- God Mode (toggle only, no slider needed)
+Library:CreateToggle(page, "God Mode", false, function(v)
+    State.godModeEnabled = v
+    if v then enableGodMode() else disableGodMode() end
+end)
+
+print("✓ Movement Module Loaded")
+
+return true

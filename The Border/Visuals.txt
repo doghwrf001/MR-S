@@ -1,0 +1,311 @@
+--==============================================================================
+--                    AEGIS HUB - VISUALS MODULE
+--==============================================================================
+-- PRESETS - Customize default values here
+local PRESETS = {
+    MOVE_HEIGHT = 1000  -- Height to move doors
+}
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.VisualsPage then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+
+local player = Players.LocalPlayer
+local page = AegisHub.VisualsPage
+local Library = AegisHub.Library
+
+-- State
+local State = {
+    lightingEffectsEnabled = false,  -- Combined: Full Bright, No Fog, Remove Effects, Inf Zoom
+    xrayEnabled = false,
+    doorsHighlighted = false,
+    doorsRemoved = false,
+    
+    enforcementConn = nil,
+    xrayOriginal = {},
+    originalLightingEffects = {},
+    doorHighlights = {},
+    doorOriginalPositions = {},
+    origCameraZoom = nil,
+    
+    connections = {}
+}
+
+-- Combined Lighting Effects (Full Bright + No Fog + Remove Effects + Infinite Zoom)
+local function enableLightingEffects()
+    -- Full Bright
+    Lighting.Brightness = 2
+    Lighting.ClockTime = 12
+    Lighting.Ambient = Color3.new(1, 1, 1)
+    Lighting.OutdoorAmbient = Color3.new(1, 1, 1)
+    
+    -- No Fog
+    Lighting.FogStart = 0
+    Lighting.FogEnd = 1e10
+    local atm = Lighting:FindFirstChildOfClass("Atmosphere")
+    if atm then
+        atm.Density = 0
+        atm.Haze = 0
+    end
+    
+    -- Remove All Lighting Effects
+    for _, effect in ipairs(Lighting:GetChildren()) do
+        if effect:IsA("Sky") or 
+           effect:IsA("BloomEffect") or 
+           effect:IsA("BlurEffect") or 
+           effect:IsA("ColorCorrectionEffect") or 
+           effect:IsA("SunRaysEffect") or 
+           effect:IsA("DepthOfFieldEffect") or
+           effect:IsA("Atmosphere") then
+            
+            if not State.originalLightingEffects[effect] then
+                State.originalLightingEffects[effect] = effect.Parent
+            end
+            effect.Parent = nil
+        end
+    end
+    
+    -- Infinite Zoom
+    if not State.origCameraZoom then
+        State.origCameraZoom = {
+            min = player.CameraMinZoomDistance,
+            max = player.CameraMaxZoomDistance
+        }
+    end
+    player.CameraMinZoomDistance = 0.5
+    player.CameraMaxZoomDistance = 700
+    
+    -- Start enforcement loop (faster to prevent flickering)
+    if State.enforcementConn then State.enforcementConn:Disconnect() end
+    State.enforcementConn = RunService.RenderStepped:Connect(function()
+        if not State.lightingEffectsEnabled then return end
+        
+        -- Enforce Full Bright
+        Lighting.ClockTime = 12
+        Lighting.Brightness = 2
+        Lighting.Ambient = Color3.new(1, 1, 1)
+        Lighting.OutdoorAmbient = Color3.new(1, 1, 1)
+        
+        -- Enforce No Fog
+        Lighting.FogStart = 0
+        Lighting.FogEnd = 1e10
+        local atm = Lighting:FindFirstChildOfClass("Atmosphere")
+        if atm then
+            atm.Density = 0
+            atm.Haze = 0
+        end
+    end)
+    table.insert(State.connections, State.enforcementConn)
+end
+
+local function disableLightingEffects()
+    -- Stop enforcement
+    if State.enforcementConn then
+        State.enforcementConn:Disconnect()
+        State.enforcementConn = nil
+    end
+    
+    -- Restore Lighting
+    Lighting.Brightness = 1
+    Lighting.ClockTime = 12
+    Lighting.Ambient = Color3.fromRGB(127, 127, 127)
+    Lighting.OutdoorAmbient = Color3.fromRGB(127, 127, 127)
+    Lighting.FogEnd = 1000
+    
+    local atm = Lighting:FindFirstChildOfClass("Atmosphere")
+    if atm then
+        atm.Density = 0.3
+        atm.Haze = 0
+    end
+    
+    -- Restore Effects
+    for effect, parent in pairs(State.originalLightingEffects) do
+        if effect then
+            effect.Parent = parent
+        end
+    end
+    State.originalLightingEffects = {}
+    
+    -- Restore Zoom
+    if State.origCameraZoom then
+        player.CameraMinZoomDistance = State.origCameraZoom.min
+        player.CameraMaxZoomDistance = State.origCameraZoom.max
+        State.origCameraZoom = nil
+    end
+end
+
+-- Door Highlighting System
+local function clearDoorHighlights()
+    for _, highlight in pairs(State.doorHighlights) do
+        pcall(function() highlight:Destroy() end)
+    end
+    State.doorHighlights = {}
+end
+
+local function getAllDoorParts()
+    local doorParts = {}
+    
+    -- Get Doors folder and ALL descendants
+    local doorsFolder = Workspace:FindFirstChild("Doors")
+    if doorsFolder then
+        -- Look for specific models and their Door parts
+        for _, child in ipairs(doorsFolder:GetDescendants()) do
+            local name = child.Name:lower()
+            
+            -- Highlight specific door parts and models
+            if child:IsA("BasePart") or child:IsA("Model") then
+                if name == "door" or 
+                   name == "door2" or 
+                   name == "gate" or 
+                   name == "gate2" or 
+                   name == "garage" or
+                   name == "garagedoor" or 
+                   name == "aedblastshield" or
+                   name == "gate_generatorterminalcomplex" then
+                    table.insert(doorParts, child)
+                end
+            end
+        end
+    end
+    
+    return doorParts
+end
+
+local function highlightDoors()
+    clearDoorHighlights()
+    
+    local doorParts = getAllDoorParts()
+    
+    for _, door in ipairs(doorParts) do
+        local highlight = Instance.new("Highlight")
+        highlight.Adornee = door
+        highlight.FillColor = Color3.fromRGB(255, 255, 255)  -- White
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)  -- White
+        highlight.FillTransparency = 1  -- Fully transparent (no fill)
+        highlight.OutlineTransparency = 0  -- Solid outline
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Parent = door
+        
+        table.insert(State.doorHighlights, highlight)
+    end
+    
+    print("✓ Highlighted " .. #doorParts .. " door parts")
+end
+
+-- Door/Wall Removal System
+local function movePartUp(part, originalPosTable)
+    if part:IsA("BasePart") then
+        -- Store original CFrame
+        if not originalPosTable[part] then
+            originalPosTable[part] = part.CFrame
+        end
+        
+        -- Move up PRESETS.MOVE_HEIGHT studs
+        part.CFrame = part.CFrame + Vector3.new(0, PRESETS.MOVE_HEIGHT, 0)
+    end
+end
+
+local function restorePartPosition(part, originalPosTable)
+    local originalCFrame = originalPosTable[part]
+    if not originalCFrame then return end
+    
+    if part:IsA("BasePart") and part.Parent then
+        part.CFrame = originalCFrame
+    end
+end
+
+local function removeDoors()
+    -- Get Doors folder
+    local doorsFolder = Workspace:FindFirstChild("Doors")
+    if not doorsFolder then 
+        warn("Doors folder not found")
+        return 
+    end
+    
+    -- Get ALL parts inside Doors folder (recursive, including inside models)
+    local parts = doorsFolder:GetDescendants()
+    local count = 0
+    
+    for _, obj in ipairs(parts) do
+        if obj:IsA("BasePart") then
+            movePartUp(obj, State.doorOriginalPositions)
+            count = count + 1
+        end
+    end
+    
+    print("✓ Moved " .. count .. " door parts up 1000 studs")
+end
+
+local function restoreDoors()
+    for part, _ in pairs(State.doorOriginalPositions) do
+        restorePartPosition(part, State.doorOriginalPositions)
+    end
+    
+    State.doorOriginalPositions = {}
+    print("✓ Restored doors")
+end
+
+-- X-Ray System
+local function applyXray()
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if inst:IsA("BasePart") then
+            local protected = false
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr.Character and inst:IsDescendantOf(plr.Character) then
+                    protected = true
+                    break
+                end
+            end
+            
+            if not protected then
+                if State.xrayOriginal[inst] == nil then
+                    State.xrayOriginal[inst] = inst.Transparency
+                end
+                inst.Transparency = 1  -- Full transparency
+            end
+        end
+    end
+end
+
+local function restoreXray()
+    for part, orig in pairs(State.xrayOriginal) do
+        pcall(function()
+            if part and part.Parent then
+                part.Transparency = orig
+            end
+        end)
+    end
+    State.xrayOriginal = {}
+end
+
+-- Create UI
+Library:CreateToggle(page, "Lighting Effects, Full Bright, No Fog", false, function(enabled)
+    State.lightingEffectsEnabled = enabled
+    if enabled then enableLightingEffects() else disableLightingEffects() end
+end)
+
+Library:CreateToggle(page, "Highlight Doors", false, function(enabled)
+    State.doorsHighlighted = enabled
+    if enabled then highlightDoors() else clearDoorHighlights() end
+end)
+
+Library:CreateToggle(page, "Remove All Doors", false, function(enabled)
+    State.doorsRemoved = enabled
+    if enabled then removeDoors() else restoreDoors() end
+end)
+
+Library:CreateToggle(page, "X-Ray", false, function(enabled)
+    State.xrayEnabled = enabled
+    if enabled then applyXray() else restoreXray() end
+end)
+
+print("✓ Visuals Module Loaded")
+
+return true

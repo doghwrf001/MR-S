@@ -1,0 +1,721 @@
+--==============================================================================
+--                    AEGIS HUB - AEGIS ESP MODULE
+--==============================================================================
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.AegisESP then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local page = AegisHub.AegisESP
+local Library = AegisHub.Library
+
+-- Aegis Team Names (from screenshot - updated)
+local AEGIS_TEAMS = {
+    AllAegis = {
+        "AEGIS Corporation",
+        "Conference",
+        "Experiment1",
+        "Experiment2",
+        "Insurrectionist",
+        "Interrogation",
+        "Interview1",
+        "Interview2",
+        "Lesson1",
+        "Lesson2",
+        "Patrol1",
+        "Patrol2",
+        "Patrol3",
+        "Patrol4",
+        "Rally",
+        "Sewer Dweller",
+        "Subject",
+        "The Chairman",
+        "Training"
+    },
+    Patrol = {"Patrol1", "Patrol2", "Patrol3", "Patrol4"},
+    Training = {"Lesson1", "Lesson2", "Training"},
+    Conference = {"Conference"},
+    Rally = {"Rally"}
+}
+
+-- Developer/Admin UserIDs (shown in blue)
+local DEVELOPER_IDS = {
+    161793207, 19616650, 588455053, 561945549, 426054103, 111887476, 2246116168,
+    139846572, 429845175, 358410086, 57380307, 80375246, 131221, 677770378,
+    568516696, 343675633, 1084921679, 1435789407, 2500617901, 452315772,
+    1710599996, 149706863, 206978484, 1574106704, 162753200, 63727901, 304709117
+}
+
+-- Check if player is a developer/admin
+local function isDeveloper(plr)
+    for _, id in ipairs(DEVELOPER_IDS) do
+        if plr.UserId == id then
+            return true
+        end
+    end
+    return false
+end
+
+-- Get team color based on team name
+local function getTeamColor(teamName, plr)
+    -- Developers/Admins - Blue (highest priority)
+    if plr and isDeveloper(plr) then
+        return Color3.fromRGB(100, 180, 255)
+    end
+    
+    -- Chairman - Purple
+    if teamName == "The Chairman" then
+        return Color3.fromRGB(138, 43, 226)
+    
+    -- Training/Lesson/Patrol/Rally/Conference - Light Yellow
+    elseif teamName == "Training" or teamName == "Lesson1" or teamName == "Lesson2" or
+           teamName == "Patrol1" or teamName == "Patrol2" or teamName == "Patrol3" or teamName == "Patrol4" or
+           teamName == "Rally" or teamName == "Conference" then
+        return Color3.fromRGB(255, 255, 150)
+    
+    -- All other Aegis - Light Red
+    else
+        return Color3.fromRGB(255, 100, 100)
+    end
+end
+
+-- State
+local State = {
+    allAegisEnabled = false,  -- Start disabled
+    
+    showName = false,
+    showDistance = false,
+    showHealth = false,
+    
+    highlightEnabled = true,
+    highlightTransparency = 0.2,
+    
+    espObjects = {},
+    updateConn = nil,
+    
+    connections = {}
+}
+
+-- Check if player is in Aegis teams
+local function isAegisPlayer(plr, teamList)
+    if not plr or not plr.Team then return false end
+    
+    for _, teamName in ipairs(teamList) do
+        if plr.Team.Name == teamName then
+            return true
+        end
+    end
+    return false
+end
+
+-- Create ESP for player
+local function createESP(plr)
+    if plr == player then return end
+    
+    local teamColor = getTeamColor(plr.Team and plr.Team.Name or "", plr)
+    
+    local espData = {
+        player = plr,
+        billboardGui = nil,
+        nameLabel = nil,
+        distanceLabel = nil,
+        healthLabel = nil,
+        highlight = nil
+    }
+    
+    -- Create Highlight
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "AegisHighlight_" .. plr.Name
+    highlight.FillColor = teamColor
+    highlight.OutlineColor = teamColor
+    highlight.FillTransparency = State.highlightTransparency
+    highlight.OutlineTransparency = State.highlightTransparency
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = State.highlightEnabled
+    highlight.Adornee = nil
+    
+    espData.highlight = highlight
+    
+    -- Create BillboardGui
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "AegisESP_" .. plr.Name
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 200, 0, 100)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.Adornee = nil
+    billboard.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    
+    -- Container frame
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, 0, 1, 0)
+    container.BackgroundTransparency = 1
+    container.Parent = billboard
+    
+    -- Name label (extra bold, light red or team color)
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1, 0, 0, 20)
+    nameLabel.Position = UDim2.new(0, 0, 0, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = teamColor
+    nameLabel.TextStrokeTransparency = 0
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 16
+    nameLabel.Text = plr.Name
+    nameLabel.Visible = State.showName
+    nameLabel.ZIndex = 100
+    nameLabel.Parent = container
+    
+    -- Distance label (only number, bold)
+    local distanceLabel = Instance.new("TextLabel")
+    distanceLabel.Size = UDim2.new(1, 0, 0, 18)
+    distanceLabel.Position = UDim2.new(0, 0, 0, 22)
+    distanceLabel.BackgroundTransparency = 1
+    distanceLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distanceLabel.TextStrokeTransparency = 0
+    distanceLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    distanceLabel.Font = Enum.Font.GothamBold
+    distanceLabel.TextSize = 14
+    distanceLabel.Text = "0"
+    distanceLabel.Visible = State.showDistance
+    distanceLabel.ZIndex = 100
+    distanceLabel.Parent = container
+    
+    -- Health label (bold)
+    local healthLabel = Instance.new("TextLabel")
+    healthLabel.Size = UDim2.new(1, 0, 0, 18)
+    healthLabel.Position = UDim2.new(0, 0, 0, 42)
+    healthLabel.BackgroundTransparency = 1
+    healthLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+    healthLabel.TextStrokeTransparency = 0
+    healthLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    healthLabel.Font = Enum.Font.GothamBold
+    healthLabel.TextSize = 14
+    healthLabel.Text = "100 HP"
+    healthLabel.Visible = State.showHealth
+    healthLabel.ZIndex = 100
+    healthLabel.Parent = container
+    
+    espData.billboardGui = billboard
+    espData.nameLabel = nameLabel
+    espData.distanceLabel = distanceLabel
+    espData.healthLabel = healthLabel
+    
+    return espData
+end
+
+-- Remove ESP for player
+local function removeESP(plr)
+    if State.espObjects[plr] then
+        if State.espObjects[plr].billboardGui then
+            State.espObjects[plr].billboardGui:Destroy()
+        end
+        if State.espObjects[plr].highlight then
+            State.espObjects[plr].highlight:Destroy()
+        end
+        State.espObjects[plr] = nil
+    end
+end
+
+-- Update all ESP
+local function updateESP()
+    local playerDistances = {}
+    
+    -- Calculate distances and update ESP
+    for plr, espData in pairs(State.espObjects) do
+        if not plr or not plr.Parent or not plr.Character then
+            removeESP(plr)
+            continue
+        end
+        
+        local char = plr.Character
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        
+        if hrp and hum then
+            -- Calculate distance
+            local dist = 0
+            if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                dist = (hrp.Position - player.Character.HumanoidRootPart.Position).Magnitude
+            end
+            
+            table.insert(playerDistances, {player = plr, distance = dist, espData = espData, hrp = hrp, hum = hum})
+        end
+    end
+    
+    -- Sort by distance (closest first gets highest ZIndex)
+    table.sort(playerDistances, function(a, b) return a.distance < b.distance end)
+    
+    -- Update ESP with sorted ZIndex
+    for i, data in ipairs(playerDistances) do
+        local espData = data.espData
+        local hrp = data.hrp
+        local hum = data.hum
+        local dist = data.distance
+        
+        -- Update adornee
+        if espData.billboardGui.Adornee ~= hrp then
+            espData.billboardGui.Adornee = hrp
+            if not espData.billboardGui.Parent then
+                espData.billboardGui.Parent = hrp
+            end
+        end
+        
+        -- Update highlight
+        if espData.highlight then
+            if espData.highlight.Adornee ~= data.player.Character then
+                espData.highlight.Adornee = data.player.Character
+                if not espData.highlight.Parent then
+                    espData.highlight.Parent = data.player.Character
+                end
+            end
+            espData.highlight.Enabled = State.highlightEnabled
+            espData.highlight.FillTransparency = State.highlightTransparency
+            espData.highlight.OutlineTransparency = State.highlightTransparency
+        end
+        
+        -- Set ZIndex based on proximity (closest = highest)
+        local zIndex = 1000 - i
+        espData.billboardGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+        espData.nameLabel.ZIndex = zIndex
+        espData.distanceLabel.ZIndex = zIndex
+        espData.healthLabel.ZIndex = zIndex
+        
+        -- Update distance (number only)
+        if State.showDistance then
+            espData.distanceLabel.Text = string.format("%.0f", dist)
+        end
+        
+        -- Update health
+        if State.showHealth then
+            local healthPercent = (hum.Health / hum.MaxHealth) * 100
+            espData.healthLabel.Text = string.format("%.0f HP", hum.Health)
+            
+            -- Color based on health
+            if healthPercent > 75 then
+                espData.healthLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+            elseif healthPercent > 50 then
+                espData.healthLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+            elseif healthPercent > 25 then
+                espData.healthLabel.TextColor3 = Color3.fromRGB(255, 165, 0)
+            else
+                espData.healthLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+            end
+        end
+        
+        -- Update visibility based on settings
+        espData.nameLabel.Visible = State.showName
+        espData.distanceLabel.Visible = State.showDistance
+        espData.healthLabel.Visible = State.showHealth
+    end
+end
+
+-- Refresh ESP based on current settings
+local function refreshESP()
+    -- Remove all existing ESP
+    for plr, _ in pairs(State.espObjects) do
+        removeESP(plr)
+    end
+    
+    -- Check which teams should be shown
+    local teamsToShow = {}
+    
+    if State.allAegisEnabled then
+        for _, teamName in ipairs(AEGIS_TEAMS.AllAegis) do
+            teamsToShow[teamName] = true
+        end
+    end
+    
+    -- Create ESP for matching players
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player and plr.Team and teamsToShow[plr.Team.Name] then
+            State.espObjects[plr] = createESP(plr)
+        end
+    end
+end
+
+-- Start ESP
+local function startESP()
+    if State.updateConn then return end
+    
+    refreshESP()
+    
+    State.updateConn = RunService.RenderStepped:Connect(function()
+        updateESP()
+    end)
+    
+    table.insert(State.connections, State.updateConn)
+    
+    -- Check for team changes and new players every 5 seconds
+    task.spawn(function()
+        while State.updateConn do
+            task.wait(5)
+            if State.allAegisEnabled then
+                refreshESP()
+            end
+        end
+    end)
+end
+
+-- Stop ESP
+local function stopESP()
+    if State.updateConn then
+        State.updateConn:Disconnect()
+        State.updateConn = nil
+    end
+    
+    for plr, _ in pairs(State.espObjects) do
+        removeESP(plr)
+    end
+end
+
+-- Player added/removed handlers
+Players.PlayerAdded:Connect(function(plr)
+    task.wait(1)
+    if State.allAegisEnabled then
+        refreshESP()
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+    removeESP(plr)
+end)
+
+--==============================================================================
+--                          CREATE UI
+--==============================================================================
+
+-- All Aegis Toggle (Main Button) - Starts disabled
+Library:CreateToggle(page, "All Aegis", false, function(enabled)
+    State.allAegisEnabled = enabled
+    if enabled then
+        startESP()
+    else
+        stopESP()
+    end
+end)
+
+-- Fill Highlight with specific transparency values (0.1 - 0.9)
+do
+    local transparencyValues = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}
+    local transparencyLabels = {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9"}
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 60)
+    frame.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 5
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Text = "Fill Highlight"
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 14
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
+    label.Size = UDim2.new(0, 120, 1, 0)
+    label.Position = UDim2.new(0, 15, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 6
+    label.Parent = frame
+    
+    -- Slider
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(0, 200, 0, 12)
+    barBg.Position = UDim2.new(0, 140, 0, 24)
+    barBg.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    barBg.BorderSizePixel = 0
+    barBg.ZIndex = 6
+    barBg.Parent = frame
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0.125, 0, 1, 0)  -- 0.2 = index 2, which is 1/8 = 0.125
+    fill.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 7
+    fill.Parent = barBg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    
+    local grabber = Instance.new("Frame")
+    grabber.Size = UDim2.new(0, 18, 0, 18)
+    grabber.AnchorPoint = Vector2.new(0.5, 0.5)
+    grabber.Position = UDim2.new(1, 0, 0.5, 0)
+    grabber.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    grabber.ZIndex = 8
+    grabber.Parent = fill
+    Instance.new("UICorner", grabber).CornerRadius = UDim.new(1, 0)
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Text = "0.2"
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 14
+    valueLabel.TextColor3 = Color3.fromRGB(138, 43, 226)
+    valueLabel.Size = UDim2.new(0, 50, 0, 30)
+    valueLabel.Position = UDim2.new(0, 350, 0, 15)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+    valueLabel.ZIndex = 6
+    valueLabel.Parent = frame
+    
+    -- Toggle switch
+    local switch = Instance.new("TextButton")
+    switch.Text = ""
+    switch.Size = UDim2.new(0, 50, 0, 26)
+    switch.Position = UDim2.new(1, -65, 0.5, -13)
+    switch.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    switch.AutoButtonColor = false
+    switch.ZIndex = 6
+    switch.Parent = frame
+    Instance.new("UICorner", switch).CornerRadius = UDim.new(1, 0)
+    
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 20, 0, 20)
+    dot.Position = UDim2.new(1, -23, 0.5, -10)
+    dot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    dot.BorderSizePixel = 0
+    dot.ZIndex = 7
+    dot.Parent = switch
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+    
+    local TweenService = game:GetService("TweenService")
+    
+    switch.MouseButton1Click:Connect(function()
+        State.highlightEnabled = not State.highlightEnabled
+        updateESP()
+        
+        local newColor = State.highlightEnabled and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+        local newPos = State.highlightEnabled and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10)
+        TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+        TweenService:Create(dot, TweenInfo.new(0.2), {Position = newPos}):Play()
+    end)
+    
+    -- Slider logic
+    local dragging = false
+    local function updateSlider(input)
+        local sizeX = barBg.AbsoluteSize.X
+        local relativePos = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / sizeX, 0, 1)
+        
+        local step = math.floor(relativePos * 8 + 0.5) / 8
+        local index = math.floor(step * 8) + 1
+        index = math.clamp(index, 1, 9)
+        
+        State.highlightTransparency = transparencyValues[index]
+        fill.Size = UDim2.new(step, 0, 1, 0)
+        valueLabel.Text = transparencyLabels[index]
+        
+        updateESP()
+    end
+    
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    fill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    grabber.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    game:GetService("UserInputService").InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 18, 0, 18)}):Play()
+        end
+    end)
+    
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input)
+        end
+    end)
+end
+
+-- ESP Options (All on one line: Name On/Off / Distance On/Off / Health On/Off)
+do
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 45)
+    frame.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 3
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    local TweenService = game:GetService("TweenService")
+    
+    -- Name Toggle
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Text = "Name"
+    nameLabel.Size = UDim2.new(0, 50, 1, 0)
+    nameLabel.Position = UDim2.new(0, 15, 0, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+    nameLabel.Font = Enum.Font.Gotham
+    nameLabel.TextSize = 12
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.ZIndex = 4
+    nameLabel.Parent = frame
+    
+    local nameSwitch = Instance.new("TextButton")
+    nameSwitch.Text = ""
+    nameSwitch.Size = UDim2.new(0, 40, 0, 20)
+    nameSwitch.Position = UDim2.new(0, 65, 0.5, -10)
+    nameSwitch.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    nameSwitch.AutoButtonColor = false
+    nameSwitch.ZIndex = 4
+    nameSwitch.Parent = frame
+    Instance.new("UICorner", nameSwitch).CornerRadius = UDim.new(1, 0)
+    
+    local nameDot = Instance.new("Frame")
+    nameDot.Size = UDim2.new(0, 16, 0, 16)
+    nameDot.Position = UDim2.new(0, 2, 0.5, -8)
+    nameDot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    nameDot.BorderSizePixel = 0
+    nameDot.ZIndex = 5
+    nameDot.Parent = nameSwitch
+    Instance.new("UICorner", nameDot).CornerRadius = UDim.new(1, 0)
+    
+    nameSwitch.MouseButton1Click:Connect(function()
+        State.showName = not State.showName
+        updateESP()
+        
+        local newColor = State.showName and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+        local newPos = State.showName and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        TweenService:Create(nameSwitch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+        TweenService:Create(nameDot, TweenInfo.new(0.2), {Position = newPos}):Play()
+    end)
+    
+    -- Separator
+    local sep1 = Instance.new("TextLabel")
+    sep1.Text = "/"
+    sep1.Size = UDim2.new(0, 10, 1, 0)
+    sep1.Position = UDim2.new(0, 115, 0, 0)
+    sep1.BackgroundTransparency = 1
+    sep1.TextColor3 = Color3.fromRGB(100, 100, 110)
+    sep1.Font = Enum.Font.Gotham
+    sep1.TextSize = 12
+    sep1.ZIndex = 4
+    sep1.Parent = frame
+    
+    -- Distance Toggle
+    local distLabel = Instance.new("TextLabel")
+    distLabel.Text = "Distance"
+    distLabel.Size = UDim2.new(0, 60, 1, 0)
+    distLabel.Position = UDim2.new(0, 135, 0, 0)
+    distLabel.BackgroundTransparency = 1
+    distLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+    distLabel.Font = Enum.Font.Gotham
+    distLabel.TextSize = 12
+    distLabel.TextXAlignment = Enum.TextXAlignment.Left
+    distLabel.ZIndex = 4
+    distLabel.Parent = frame
+    
+    local distSwitch = Instance.new("TextButton")
+    distSwitch.Text = ""
+    distSwitch.Size = UDim2.new(0, 40, 0, 20)
+    distSwitch.Position = UDim2.new(0, 195, 0.5, -10)
+    distSwitch.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    distSwitch.AutoButtonColor = false
+    distSwitch.ZIndex = 4
+    distSwitch.Parent = frame
+    Instance.new("UICorner", distSwitch).CornerRadius = UDim.new(1, 0)
+    
+    local distDot = Instance.new("Frame")
+    distDot.Size = UDim2.new(0, 16, 0, 16)
+    distDot.Position = UDim2.new(0, 2, 0.5, -8)
+    distDot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    distDot.BorderSizePixel = 0
+    distDot.ZIndex = 5
+    distDot.Parent = distSwitch
+    Instance.new("UICorner", distDot).CornerRadius = UDim.new(1, 0)
+    
+    distSwitch.MouseButton1Click:Connect(function()
+        State.showDistance = not State.showDistance
+        updateESP()
+        
+        local newColor = State.showDistance and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+        local newPos = State.showDistance and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        TweenService:Create(distSwitch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+        TweenService:Create(distDot, TweenInfo.new(0.2), {Position = newPos}):Play()
+    end)
+    
+    -- Separator
+    local sep2 = Instance.new("TextLabel")
+    sep2.Text = "/"
+    sep2.Size = UDim2.new(0, 10, 1, 0)
+    sep2.Position = UDim2.new(0, 245, 0, 0)
+    sep2.BackgroundTransparency = 1
+    sep2.TextColor3 = Color3.fromRGB(100, 100, 110)
+    sep2.Font = Enum.Font.Gotham
+    sep2.TextSize = 12
+    sep2.ZIndex = 4
+    sep2.Parent = frame
+    
+    -- Health Toggle
+    local healthLabel = Instance.new("TextLabel")
+    healthLabel.Text = "Health"
+    healthLabel.Size = UDim2.new(0, 50, 1, 0)
+    healthLabel.Position = UDim2.new(0, 265, 0, 0)
+    healthLabel.BackgroundTransparency = 1
+    healthLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+    healthLabel.Font = Enum.Font.Gotham
+    healthLabel.TextSize = 12
+    healthLabel.TextXAlignment = Enum.TextXAlignment.Left
+    healthLabel.ZIndex = 4
+    healthLabel.Parent = frame
+    
+    local healthSwitch = Instance.new("TextButton")
+    healthSwitch.Text = ""
+    healthSwitch.Size = UDim2.new(0, 40, 0, 20)
+    healthSwitch.Position = UDim2.new(0, 320, 0.5, -10)
+    healthSwitch.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    healthSwitch.AutoButtonColor = false
+    healthSwitch.ZIndex = 4
+    healthSwitch.Parent = frame
+    Instance.new("UICorner", healthSwitch).CornerRadius = UDim.new(1, 0)
+    
+    local healthDot = Instance.new("Frame")
+    healthDot.Size = UDim2.new(0, 16, 0, 16)
+    healthDot.Position = UDim2.new(0, 2, 0.5, -8)
+    healthDot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    healthDot.BorderSizePixel = 0
+    healthDot.ZIndex = 5
+    healthDot.Parent = healthSwitch
+    Instance.new("UICorner", healthDot).CornerRadius = UDim.new(1, 0)
+    
+    healthSwitch.MouseButton1Click:Connect(function()
+        State.showHealth = not State.showHealth
+        updateESP()
+        
+        local newColor = State.showHealth and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+        local newPos = State.showHealth and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        TweenService:Create(healthSwitch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+        TweenService:Create(healthDot, TweenInfo.new(0.2), {Position = newPos}):Play()
+    end)
+end
+
+print("✓ Aegis ESP Module Loaded")
+
+return true

@@ -1,0 +1,512 @@
+--==============================================================================
+--                    AEGIS HUB - ADMIN TRACKER MODULE
+--==============================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Rank System
+local RANK_ORDER = {
+    "Chairman",
+    "Developer",  -- Added back
+    "Table Of Military Leadership",
+    "Unit Commander",
+    "Unit Captain",
+    "Veteran Officer",
+    "Warrant Officer",
+    "Officer",
+    "Administered Specialist",
+    "Administered Field Agent",
+    "Specialist",
+}
+
+local RANKS = {
+    ["Administered Field Agent"] = {
+        3309970495, 226117655, 689247279, 1975838348, 105892068, 463669642, 861989591
+    },
+    ["Specialist"] = {37883732, 509426887, 561064343, 1385018628},
+    ["Administered Specialist"] = {937564141, 7335374299, 2761696222, 192254622, 139320432},
+    ["Officer"] = {3469222247, 755966848, 728586602, 334713155, 817589023},
+    ["Warrant Officer"] = {2522740248, 3276554424, 176149128, 2213826264, 189393},
+    ["Veteran Officer"] = {1677921525, 62954014, 1818230195, 1695017283, 727677637},
+    ["Unit Captain"] = {1938907604, 1509777239, 409397743, 293671581, 100016418},
+    ["Unit Commander"] = {82964247, 355588359, 923213464},
+    ["Table Of Military Leadership"] = {1419426348, 631228062, 23030407, 100474014, 671292893, 923214624, 112026803},
+    ["Developer"] = {
+        161793207, 19616650, 588455053, 561945549, 426054103, 111887476, 2246116168,
+        139846572, 429845175, 358410086, 57380307, 80375246, 131221, 677770378,
+        568516696, 343675633, 1084921679, 1435789407, 2500617901, 452315772,
+        1710599996, 149706863, 206978484, 1574106704, 162753200, 63727901, 304709117
+    },
+    ["Chairman"] = {17319802},
+}
+
+local RANK_ABBREV = {
+    ["Administered Field Agent"] = "AFA",
+    ["Specialist"] = "SPC",
+    ["Administered Specialist"] = "ASP",
+    ["Officer"] = "OFC",
+    ["Warrant Officer"] = "WO",
+    ["Veteran Officer"] = "VO",
+    ["Unit Captain"] = "UCPT",
+    ["Unit Commander"] = "UCMD",
+    ["Table Of Military Leadership"] = "TML",
+    ["Developer"] = "DEV",
+    ["Chairman"] = "CHAIR",
+}
+
+local RANK_COLORS = {
+    Color3.fromRGB(255, 50, 50),     -- Chairman (Red) - Most serious
+    Color3.fromRGB(100, 200, 255),   -- Developer (Light Blue)
+    Color3.fromRGB(255, 100, 0),     -- TML (Dark Orange)
+    Color3.fromRGB(255, 150, 0),     -- Unit Commander (Orange)
+    Color3.fromRGB(255, 200, 0),     -- Unit Captain (Light Orange)
+    Color3.fromRGB(255, 255, 0),     -- Veteran Officer (Yellow)
+    Color3.fromRGB(200, 255, 100),   -- Warrant Officer (Yellow-Green)
+    Color3.fromRGB(150, 255, 150),   -- Officer (Light Green)
+    Color3.fromRGB(150, 200, 255),   -- Administered Specialist (Sky Blue)
+    Color3.fromRGB(180, 180, 255),   -- Administered Field Agent (Light Purple)
+    Color3.fromRGB(200, 200, 200),   -- Specialist (Gray) - Least serious
+}
+
+-- Theme (matches Aegis Hub)
+local Theme = {
+    Main = Color3.fromRGB(28, 28, 34),
+    Accent = Color3.fromRGB(138, 43, 226),
+    TextWhite = Color3.fromRGB(240, 240, 240),
+    TextGray = Color3.fromRGB(150, 150, 165),
+    Stroke = Color3.fromRGB(55, 55, 65),
+    ElementBg = Color3.fromRGB(34, 34, 40)
+}
+
+-- Build lookup tables
+local userIdToRank = {}
+local rankToIndex = {}
+
+for rank, userIds in pairs(RANKS) do
+    for _, userId in ipairs(userIds) do
+        userIdToRank[userId] = rank
+    end
+end
+
+for index, rank in ipairs(RANK_ORDER) do
+    rankToIndex[rank] = index
+end
+
+-- State
+local State = {
+    minimized = false,
+    flashActive = false,
+    flashConnection = nil
+}
+
+--==============================================================================
+--                          CREATE UI
+--==============================================================================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AdminNotifier"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
+
+-- Main Frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "Main"
+mainFrame.AnchorPoint = Vector2.new(1, 0)
+mainFrame.Position = UDim2.new(1, -15, 0, 60)
+mainFrame.Size = UDim2.new(0, 280, 0, 50)
+mainFrame.BackgroundColor3 = Theme.Main
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 10)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Theme.Accent
+mainStroke.Transparency = 0.7
+mainStroke.Thickness = 2
+mainStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+mainStroke.Parent = mainFrame
+
+-- Alert stroke (for flashing when admins detected)
+local alertStroke = Instance.new("UIStroke")
+alertStroke.Color = Color3.fromRGB(255, 60, 60)
+alertStroke.Transparency = 1
+alertStroke.Thickness = 3
+alertStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+alertStroke.Parent = mainFrame
+
+-- Header Frame
+local headerFrame = Instance.new("Frame")
+headerFrame.Position = UDim2.new(0, 15, 0, 12)
+headerFrame.Size = UDim2.new(1, -60, 0, 26)
+headerFrame.BackgroundTransparency = 1
+headerFrame.Parent = mainFrame
+
+-- Status Dot
+local statusDot = Instance.new("Frame")
+statusDot.Position = UDim2.new(0, 0, 0, 2)
+statusDot.Size = UDim2.new(0, 8, 0, 8)
+statusDot.BackgroundColor3 = Color3.fromRGB(100, 100, 110)
+statusDot.BorderSizePixel = 0
+statusDot.Parent = headerFrame
+
+local dotCorner = Instance.new("UICorner")
+dotCorner.CornerRadius = UDim.new(1, 0)
+dotCorner.Parent = statusDot
+
+-- Title Label
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Position = UDim2.new(0, 16, 0, 0)
+titleLabel.Size = UDim2.new(1, -16, 0, 14)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.Text = "ADMIN TRACKER"
+titleLabel.TextColor3 = Theme.TextWhite
+titleLabel.TextSize = 13
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = headerFrame
+
+-- Subtitle Label
+local subtitleLabel = Instance.new("TextLabel")
+subtitleLabel.Position = UDim2.new(0, 16, 0, 14)
+subtitleLabel.Size = UDim2.new(1, -16, 0, 12)
+subtitleLabel.BackgroundTransparency = 1
+subtitleLabel.Font = Enum.Font.Gotham
+subtitleLabel.Text = "0 admins detected"
+subtitleLabel.TextColor3 = Theme.TextGray
+subtitleLabel.TextSize = 10
+subtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+subtitleLabel.Parent = headerFrame
+
+-- Minimize/Expand Button
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.AnchorPoint = Vector2.new(1, 0)
+toggleBtn.Position = UDim2.new(1, -12, 0, 12)
+toggleBtn.Size = UDim2.new(0, 30, 0, 26)
+toggleBtn.BackgroundColor3 = Theme.ElementBg
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Text = ""
+toggleBtn.AutoButtonColor = false
+toggleBtn.Parent = mainFrame
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 6)
+btnCorner.Parent = toggleBtn
+
+local btnStroke = Instance.new("UIStroke")
+btnStroke.Color = Theme.Accent
+btnStroke.Transparency = 0.7
+btnStroke.Thickness = 1.5
+btnStroke.Parent = toggleBtn
+
+-- Arrow Icon (→ when expanded, ← when minimized)
+local arrow = Instance.new("TextLabel")
+arrow.Size = UDim2.new(1, 0, 1, 0)
+arrow.BackgroundTransparency = 1
+arrow.Font = Enum.Font.GothamBold
+arrow.Text = "→"  -- Right arrow when expanded (minimize = push right)
+arrow.TextColor3 = Theme.Accent
+arrow.TextSize = 20
+arrow.Parent = toggleBtn
+
+-- Divider
+local divider = Instance.new("Frame")
+divider.Position = UDim2.new(0, 15, 0, 48)
+divider.Size = UDim2.new(1, -30, 0, 1)
+divider.BackgroundColor3 = Theme.Stroke
+divider.BackgroundTransparency = 0.5
+divider.BorderSizePixel = 0
+divider.Parent = mainFrame
+
+-- List Frame
+local listFrame = Instance.new("Frame")
+listFrame.Name = "List"
+listFrame.Position = UDim2.new(0, 15, 0, 55)
+listFrame.Size = UDim2.new(1, -30, 1, -62)
+listFrame.BackgroundTransparency = 1
+listFrame.ClipsDescendants = false
+listFrame.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 6)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = listFrame
+
+--==============================================================================
+--                          FUNCTIONS
+--==============================================================================
+
+local function stopFlash()
+    State.flashActive = false
+    if State.flashConnection then
+        State.flashConnection:Disconnect()
+        State.flashConnection = nil
+    end
+    
+    TweenService:Create(alertStroke, TweenInfo.new(0.4), {
+        Transparency = 1
+    }):Play()
+    
+    TweenService:Create(statusDot, TweenInfo.new(0.4), {
+        BackgroundColor3 = Color3.fromRGB(100, 100, 110)
+    }):Play()
+end
+
+local function startFlash()
+    if State.flashActive then return end
+    State.flashActive = true
+    
+    TweenService:Create(statusDot, TweenInfo.new(0.3), {
+        BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+    }):Play()
+    
+    local t = 0
+    State.flashConnection = RunService.RenderStepped:Connect(function(dt)
+        t = t + dt * 5
+        local pulse = (math.sin(t) + 1) / 2
+        local intensity = 60 + (195 * pulse)
+        alertStroke.Color = Color3.fromRGB(255, intensity, intensity)
+        alertStroke.Transparency = 0.3 + (0.5 * pulse)
+    end)
+end
+
+local function createAdminRow(adminPlayer, rank, index)
+    local rankIndex = rankToIndex[rank] or 10
+    local rankColor = RANK_COLORS[rankIndex] or Color3.fromRGB(255, 255, 255)
+    
+    local row = Instance.new("Frame")
+    row.Name = "AdminRow"
+    row.Size = UDim2.new(1, 0, 0, 26)
+    row.BackgroundColor3 = Theme.ElementBg
+    row.BackgroundTransparency = 1
+    row.BorderSizePixel = 0
+    row.LayoutOrder = index
+    
+    local rowCorner = Instance.new("UICorner")
+    rowCorner.CornerRadius = UDim.new(0, 6)
+    rowCorner.Parent = row
+    
+    local rowStroke = Instance.new("UIStroke")
+    rowStroke.Color = rankColor
+    rowStroke.Transparency = 0.7
+    rowStroke.Thickness = 1.5
+    rowStroke.Parent = row
+    
+    -- Rank Badge
+    local badge = Instance.new("Frame")
+    badge.Position = UDim2.new(0, 8, 0.5, -10)
+    badge.Size = UDim2.new(0, 52, 0, 20)
+    badge.BackgroundColor3 = rankColor
+    badge.BackgroundTransparency = 0.85
+    badge.BorderSizePixel = 0
+    badge.Parent = row
+    
+    local badgeCorner = Instance.new("UICorner")
+    badgeCorner.CornerRadius = UDim.new(0, 5)
+    badgeCorner.Parent = badge
+    
+    local badgeStroke = Instance.new("UIStroke")
+    badgeStroke.Color = rankColor
+    badgeStroke.Transparency = 0.5
+    badgeStroke.Thickness = 1
+    badgeStroke.Parent = badge
+    
+    local badgeLabel = Instance.new("TextLabel")
+    badgeLabel.Size = UDim2.new(1, 0, 1, 0)
+    badgeLabel.BackgroundTransparency = 1
+    badgeLabel.Font = Enum.Font.GothamBold
+    badgeLabel.Text = RANK_ABBREV[rank] or "???"
+    badgeLabel.TextColor3 = rankColor
+    badgeLabel.TextSize = 10
+    badgeLabel.Parent = badge
+    
+    -- Player Name
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Position = UDim2.new(0, 68, 0, 0)
+    nameLabel.Size = UDim2.new(1, -76, 1, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.Text = "@" .. adminPlayer.Name
+    nameLabel.TextColor3 = rankColor
+    nameLabel.TextSize = 12
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    nameLabel.Parent = row
+    
+    -- Fade in animation
+    TweenService:Create(row, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 0.3
+    }):Play()
+    
+    return row
+end
+
+local function updateAdminList()
+    -- Clear existing rows
+    for _, child in ipairs(listFrame:GetChildren()) do
+        if not child:IsA("UIListLayout") then
+            child:Destroy()
+        end
+    end
+    
+    -- Collect admins
+    local admins = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        local rank = userIdToRank[plr.UserId]
+        if rank then
+            table.insert(admins, {
+                player = plr,
+                rank = rank,
+                index = rankToIndex[rank] or 999
+            })
+        end
+    end
+    
+    -- Sort by rank
+    table.sort(admins, function(a, b)
+        return a.index < b.index
+    end)
+    
+    -- Update subtitle
+    local count = #admins
+    subtitleLabel.Text = count == 0 and "No admins detected" or 
+        (count == 1 and "1 admin online" or count .. " admins online")
+    
+    -- Don't resize if minimized
+    if State.minimized then return end
+    
+    -- Resize frame and handle flashing
+    if count == 0 then
+        TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0, 280, 0, 50)
+        }):Play()
+        stopFlash()
+    else
+        -- Create admin rows
+        for i, admin in ipairs(admins) do
+            local row = createAdminRow(admin.player, admin.rank, i)
+            row.Parent = listFrame
+        end
+        
+        -- Calculate new height
+        local newHeight = 55 + (count * 26) + ((count - 1) * 6) + 10
+        TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0, 280, 0, newHeight)
+        }):Play()
+        
+        startFlash()
+    end
+end
+
+-- Toggle minimize/expand
+local function toggleMinimize()
+    State.minimized = not State.minimized
+    
+    if State.minimized then
+        -- Minimize - shrink to 50x50 with only arrow
+        arrow.Text = "←"  -- Left arrow when minimized (expand = pull left)
+        
+        -- Hide text elements immediately
+        headerFrame.Visible = false
+        divider.Visible = false
+        listFrame.Visible = false
+        
+        -- Shrink frame
+        TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(0, 50, 0, 50)
+        }):Play()
+        
+        -- Expand button to fill frame and center it
+        TweenService:Create(toggleBtn, TweenInfo.new(0.3), {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(0, 40, 0, 40)
+        }):Play()
+        
+        -- Increase arrow size
+        TweenService:Create(arrow, TweenInfo.new(0.3), {
+            TextSize = 24
+        }):Play()
+    else
+        -- Expand - restore full size
+        arrow.Text = "→"  -- Right arrow when expanded (minimize = push right)
+        
+        -- Restore button to top-right corner
+        TweenService:Create(toggleBtn, TweenInfo.new(0.3), {
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -12, 0, 12),
+            Size = UDim2.new(0, 30, 0, 26)
+        }):Play()
+        
+        -- Restore arrow size
+        TweenService:Create(arrow, TweenInfo.new(0.3), {
+            TextSize = 20
+        }):Play()
+        
+        -- Wait for button to move, then show content
+        task.wait(0.15)
+        
+        headerFrame.Visible = true
+        divider.Visible = true
+        listFrame.Visible = true
+        
+        -- Restore size based on admin count
+        updateAdminList()
+    end
+end
+
+-- Button hover effects
+toggleBtn.MouseEnter:Connect(function()
+    TweenService:Create(toggleBtn, TweenInfo.new(0.2), {
+        BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+    }):Play()
+    TweenService:Create(btnStroke, TweenInfo.new(0.2), {
+        Transparency = 0.4
+    }):Play()
+end)
+
+toggleBtn.MouseLeave:Connect(function()
+    TweenService:Create(toggleBtn, TweenInfo.new(0.2), {
+        BackgroundColor3 = Theme.ElementBg
+    }):Play()
+    TweenService:Create(btnStroke, TweenInfo.new(0.2), {
+        Transparency = 0.7
+    }):Play()
+end)
+
+toggleBtn.MouseButton1Click:Connect(toggleMinimize)
+
+--==============================================================================
+--                          MONITORING
+--==============================================================================
+
+-- Initial update
+updateAdminList()
+
+-- Monitor player changes
+Players.PlayerAdded:Connect(function()
+    task.wait(0.1)
+    updateAdminList()
+end)
+
+Players.PlayerRemoving:Connect(updateAdminList)
+
+-- Refresh every 2 seconds
+task.spawn(function()
+    while screenGui.Parent do
+        task.wait(2)
+        updateAdminList()
+    end
+end)
+
+print("✓ Admin Tracker loaded")
+
+return true

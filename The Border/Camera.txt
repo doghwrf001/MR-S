@@ -1,0 +1,577 @@
+--==============================================================================
+--                    AEGIS HUB - CAMERA MODULE (FIXED)
+--==============================================================================
+-- PRESETS - Customize default values here
+local PRESETS = {
+    FOV = {
+        DEFAULT = 70,
+        MIN = 10,
+        MAX = 120
+    },
+    FREECAM = {
+        DEFAULT_SPEED = 200,
+        MIN_SPEED = 1,
+        MAX_SPEED = 500,
+        FOV_BOOST = 1.5,           -- FOV multiplier when FreeCam is active
+        MOUSE_SENSITIVITY_BOOST = 1.5  -- Mouse sensitivity multiplier
+    }
+}
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.CameraPage then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local page = AegisHub.CameraPage
+local Library = AegisHub.Library
+
+-- State (from CoreX Camera Desync)
+local State = {
+    fovEnabled = false,
+    fovValue = PRESETS.FOV.DEFAULT,
+    
+    freecamEnabled = false,
+    freecamSpeed = PRESETS.FREECAM.DEFAULT_SPEED,
+    freecamCF = nil,
+    freecamOrig = nil,
+    freecamOrigFOV = nil,
+    freecamOrigMouseSens = nil,
+    freecamKeys = {W = false, A = false, S = false, D = false, Q = false, E = false, Shift = false},
+    freecamHotkey = nil,  -- No default hotkey
+    charOrig = nil,
+    
+    rmbDown = false,
+    yaw = 0,
+    pitch = 0,
+    
+    capturingHotkey = false,
+    
+    connections = {}
+}
+
+-- Helper functions
+local function getChar() return player.Character end
+local function getHumanoid() local c = getChar() return c and c:FindFirstChildOfClass("Humanoid") end
+local function getHRP() local c = getChar() return c and c:FindFirstChild("HumanoidRootPart") end
+
+-- FOV
+local function enableFOV()
+    local cam = Workspace.CurrentCamera
+    if cam then 
+        cam.FieldOfView = State.fovValue 
+    end
+end
+
+local function disableFOV()
+    local cam = Workspace.CurrentCamera
+    if cam then 
+        cam.FieldOfView = 70 
+    end
+end
+
+-- FreeCam Key Handler
+local function setCamKey(keyCode, isDown)
+    if keyCode == Enum.KeyCode.W then State.freecamKeys.W = isDown
+    elseif keyCode == Enum.KeyCode.A then State.freecamKeys.A = isDown
+    elseif keyCode == Enum.KeyCode.S then State.freecamKeys.S = isDown
+    elseif keyCode == Enum.KeyCode.D then State.freecamKeys.D = isDown
+    elseif keyCode == Enum.KeyCode.Q then State.freecamKeys.Q = isDown
+    elseif keyCode == Enum.KeyCode.E then State.freecamKeys.E = isDown
+    elseif keyCode == Enum.KeyCode.LeftShift or keyCode == Enum.KeyCode.RightShift then
+        State.freecamKeys.Shift = isDown
+    end
+end
+
+-- Freeze Character
+local function freezeCharacter(on)
+    local hum = getHumanoid()
+    local hrp = getHRP()
+    if not hum or not hrp then return end
+    
+    if on then
+        if not State.charOrig then
+            State.charOrig = {
+                PlatformStand = hum.PlatformStand,
+                AutoRotate = hum.AutoRotate,
+                Anchored = hrp.Anchored
+            }
+        end
+        hum.AutoRotate = false
+        hum.PlatformStand = true
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.Anchored = true
+    else
+        local o = State.charOrig
+        if o then
+            hum.PlatformStand = o.PlatformStand
+            hum.AutoRotate = o.AutoRotate
+            hrp.Anchored = o.Anchored
+        else
+            hrp.Anchored = false
+            hum.PlatformStand = false
+            hum.AutoRotate = true
+        end
+        State.charOrig = nil
+    end
+end
+
+-- Enable FreeCam (Camera Desync)
+local function enableFreeCam()
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    
+    if not State.freecamOrig then
+        State.freecamOrig = {
+            CameraType = cam.CameraType,
+            CFrame = cam.CFrame,
+            Subject = cam.CameraSubject
+        }
+    end
+    
+    -- Store and boost FOV by preset multiplier
+    if not State.freecamOrigFOV then
+        State.freecamOrigFOV = cam.FieldOfView
+    end
+    cam.FieldOfView = State.freecamOrigFOV * PRESETS.FREECAM.FOV_BOOST
+    
+    -- Store original mouse sensitivity (simulated through rotation speed multiplier)
+    State.freecamOrigMouseSens = 1.0  -- Default sensitivity
+    
+    State.freecamCF = cam.CFrame
+    cam.CameraType = Enum.CameraType.Scriptable
+    
+    -- Calculate initial yaw/pitch from camera look vector
+    local look = cam.CFrame.LookVector
+    State.yaw = math.atan2(-look.X, -look.Z)
+    State.pitch = math.asin(math.clamp(look.Y, -0.999, 0.999))
+    
+    freezeCharacter(true)
+end
+
+-- Disable FreeCam
+local function disableFreeCam()
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    
+    local o = State.freecamOrig
+    if o then
+        cam.CameraType = o.CameraType
+        cam.CFrame = o.CFrame
+        cam.CameraSubject = o.Subject
+    else
+        cam.CameraType = Enum.CameraType.Custom
+    end
+    
+    -- Restore original FOV
+    if State.freecamOrigFOV then
+        cam.FieldOfView = State.freecamOrigFOV
+        State.freecamOrigFOV = nil
+    end
+    
+    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    State.rmbDown = false
+    State.freecamCF = nil
+    State.freecamOrig = nil
+    State.freecamOrigMouseSens = nil
+    
+    freezeCharacter(false)
+end
+
+-- Teleport to Camera
+local function teleportToCam()
+    local cam = Workspace.CurrentCamera
+    local hrp = getHRP()
+    
+    if cam and hrp and State.freecamEnabled then
+        hrp.CFrame = CFrame.new(cam.CFrame.Position)
+        State.freecamEnabled = false
+        disableFreeCam()
+    end
+end
+
+-- Input Handlers
+table.insert(State.connections, UserInputService.InputBegan:Connect(function(input, gpe)
+    if not State.freecamEnabled then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        State.rmbDown = true
+        UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+    elseif input.UserInputType == Enum.UserInputType.Keyboard and not gpe then
+        setCamKey(input.KeyCode, true)
+    end
+end))
+
+table.insert(State.connections, UserInputService.InputEnded:Connect(function(input)
+    if not State.freecamEnabled then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        State.rmbDown = false
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    elseif input.UserInputType == Enum.UserInputType.Keyboard then
+        setCamKey(input.KeyCode, false)
+    end
+end))
+
+-- UI Reference (declared before hotkey handler needs it)
+local freecamControlRef = nil
+
+-- Hotkey toggle for FreeCam
+table.insert(State.connections, UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    
+    -- Only trigger if hotkey is set
+    if not State.capturingHotkey and State.freecamHotkey and input.KeyCode == State.freecamHotkey then
+        State.freecamEnabled = not State.freecamEnabled
+        if State.freecamEnabled then
+            enableFreeCam()
+        else
+            disableFreeCam()
+        end
+        
+        -- Update toggle if it exists
+        if freecamControlRef then
+            freecamControlRef.setToggle(State.freecamEnabled)
+        end
+    end
+end))
+
+table.insert(State.connections, UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        State.rmbDown = false
+        if State.freecamEnabled then
+            UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+        end
+    elseif input.UserInputType == Enum.UserInputType.Keyboard then
+        setCamKey(input.KeyCode, false)
+    end
+end))
+
+-- Render Loop
+table.insert(State.connections, RunService.RenderStepped:Connect(function(dt)
+    if not State.freecamEnabled then return end
+    
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    
+    -- Ensure camera is scriptable
+    if cam.CameraType ~= Enum.CameraType.Scriptable then
+        enableFreeCam()
+    end
+    
+    local cf = State.freecamCF or cam.CFrame
+    
+    -- Handle right-click rotation with preset sensitivity boost
+    if State.rmbDown then
+        local delta = UserInputService:GetMouseDelta()
+        State.yaw = State.yaw - delta.X * 0.0035 * PRESETS.FREECAM.MOUSE_SENSITIVITY_BOOST
+        State.pitch = math.clamp(State.pitch - delta.Y * 0.0035 * PRESETS.FREECAM.MOUSE_SENSITIVITY_BOOST, math.rad(-80), math.rad(80))
+    end
+    
+    -- Build rotation matrix
+    local rot = CFrame.fromOrientation(State.pitch, State.yaw, 0)
+    local base = CFrame.new(cf.Position) * rot
+    local look = base.LookVector
+    local right = base.RightVector
+    local up = Vector3.new(0, 1, 0)
+    
+    -- Calculate movement direction
+    local x, y, z = 0, 0, 0
+    if State.freecamKeys.D then x = x + 1 end
+    if State.freecamKeys.A then x = x - 1 end
+    if State.freecamKeys.S then z = z + 1 end
+    if State.freecamKeys.W then z = z - 1 end
+    if State.freecamKeys.E then y = y + 1 end
+    if State.freecamKeys.Q then y = y - 1 end
+    
+    local dir = (right * x) + (look * (-z)) + (up * y)
+    
+    -- Apply movement
+    if dir.Magnitude > 0 then
+        local spd = State.freecamSpeed
+        if State.freecamKeys.Shift then spd = spd * 2 end
+        base = base + dir.Unit * (spd * dt)
+    end
+    
+    State.freecamCF = base
+    cam.CFrame = base
+end))
+
+-- Character respawn handler
+table.insert(State.connections, player.CharacterAdded:Connect(function()
+    task.wait(0.3)
+    
+    -- Turn off FreeCam on respawn
+    if State.freecamEnabled then
+        State.freecamEnabled = false
+        disableFreeCam()
+        if freecamControlRef then
+            freecamControlRef.setToggle(false)
+        end
+    end
+    
+    if State.fovEnabled then enableFOV() end
+end))
+
+-- Also detect death before respawn
+table.insert(State.connections, player.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid")
+    hum.Died:Connect(function()
+        if State.freecamEnabled then
+            State.freecamEnabled = false
+            disableFreeCam()
+            if freecamControlRef then
+                freecamControlRef.setToggle(false)
+            end
+        end
+    end)
+end))
+
+-- Create UI
+-- FOV with Toggle+Slider
+Library:CreateToggleSlider(page, "FOV", PRESETS.FOV.MIN, PRESETS.FOV.MAX, PRESETS.FOV.DEFAULT, 
+    function(enabled)
+        State.fovEnabled = enabled
+        if enabled then enableFOV() else disableFOV() end
+    end,
+    function(value)
+        State.fovValue = value
+        if State.fovEnabled then
+            local cam = Workspace.CurrentCamera
+            if cam then cam.FieldOfView = value end
+        end
+    end
+)
+
+-- FreeCam with Hotkey, Slider, and TP to Cam
+
+do
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 60)
+    frame.BackgroundColor3 = Color3.fromRGB(34, 34, 40)
+    frame.BorderSizePixel = 0
+    frame.ZIndex = 5
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Text = "FreeCam"
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 14
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
+    label.Size = UDim2.new(0, 120, 1, 0)
+    label.Position = UDim2.new(0, 15, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 6
+    label.Parent = frame
+    
+    -- Slider
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(0, 200, 0, 12)  -- Increased from 120 to 200
+    barBg.Position = UDim2.new(0, 140, 0, 24)
+    barBg.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    barBg.BorderSizePixel = 0
+    barBg.ZIndex = 6
+    barBg.Parent = frame
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0.4, 0, 1, 0)  -- Updated for 200 default
+    fill.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 7
+    fill.Parent = barBg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    
+    local grabber = Instance.new("Frame")
+    grabber.Size = UDim2.new(0, 18, 0, 18)
+    grabber.AnchorPoint = Vector2.new(0.5, 0.5)
+    grabber.Position = UDim2.new(1, 0, 0.5, 0)
+    grabber.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    grabber.ZIndex = 8
+    grabber.Parent = fill
+    Instance.new("UICorner", grabber).CornerRadius = UDim.new(1, 0)
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Text = "200"  -- Updated default
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 14
+    valueLabel.TextColor3 = Color3.fromRGB(138, 43, 226)
+    valueLabel.Size = UDim2.new(0, 50, 0, 30)
+    valueLabel.Position = UDim2.new(0, 350, 0, 15)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+    valueLabel.ZIndex = 6
+    valueLabel.Parent = frame
+    
+    -- TP to Cam Button
+    local tpBtn = Instance.new("TextButton")
+    tpBtn.Size = UDim2.new(0, 80, 0, 26)
+    tpBtn.Position = UDim2.new(0, 410, 0.5, -13)
+    tpBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 30)  -- Darker background
+    tpBtn.BorderSizePixel = 0
+    tpBtn.Font = Enum.Font.GothamBold
+    tpBtn.TextSize = 11
+    tpBtn.TextColor3 = Color3.fromRGB(138, 43, 226)
+    tpBtn.Text = "TP to Cam"
+    tpBtn.ZIndex = 6
+    tpBtn.Parent = frame
+    Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 6)
+    
+    tpBtn.MouseEnter:Connect(function()
+        tpBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    end)
+    
+    tpBtn.MouseLeave:Connect(function()
+        tpBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    end)
+    
+    tpBtn.MouseButton1Click:Connect(function()
+        teleportToCam()
+        -- Auto turn off
+        State.freecamEnabled = false
+        disableFreeCam()
+        if freecamControlRef then
+            freecamControlRef.setToggle(false)
+        end
+    end)
+    
+    -- Hotkey Button (moved next to toggle)
+    local hotkeyBtn = Instance.new("TextButton")
+    hotkeyBtn.Size = UDim2.new(0, 50, 0, 26)
+    hotkeyBtn.Position = UDim2.new(1, -125, 0.5, -13)  -- Positioned left of toggle
+    hotkeyBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    hotkeyBtn.BorderSizePixel = 0
+    hotkeyBtn.Font = Enum.Font.GothamBold
+    hotkeyBtn.TextSize = 11
+    hotkeyBtn.TextColor3 = Color3.fromRGB(138, 43, 226)
+    hotkeyBtn.Text = State.freecamHotkey and State.freecamHotkey.Name or "None"
+    hotkeyBtn.ZIndex = 6
+    hotkeyBtn.Parent = frame
+    Instance.new("UICorner", hotkeyBtn).CornerRadius = UDim.new(0, 6)
+    
+    hotkeyBtn.MouseButton1Click:Connect(function()
+        State.capturingHotkey = true
+        hotkeyBtn.Text = "..."
+        hotkeyBtn.TextColor3 = Color3.fromRGB(255, 140, 50)
+    end)
+    
+    local hotkeyConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if not State.capturingHotkey then return end
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if input.KeyCode == Enum.KeyCode.Escape then
+            State.capturingHotkey = false
+            hotkeyBtn.Text = State.freecamHotkey and State.freecamHotkey.Name or "None"
+            hotkeyBtn.TextColor3 = Color3.fromRGB(138, 43, 226)
+            return
+        end
+        
+        State.freecamHotkey = input.KeyCode
+        hotkeyBtn.Text = input.KeyCode.Name
+        hotkeyBtn.TextColor3 = Color3.fromRGB(138, 43, 226)
+        State.capturingHotkey = false
+    end)
+    table.insert(State.connections, hotkeyConn)
+    
+    -- Toggle Switch
+    local switch = Instance.new("TextButton")
+    switch.Text = ""
+    switch.Size = UDim2.new(0, 50, 0, 26)
+    switch.Position = UDim2.new(1, -65, 0.5, -13)
+    switch.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    switch.AutoButtonColor = false
+    switch.ZIndex = 6
+    switch.Parent = frame
+    Instance.new("UICorner", switch).CornerRadius = UDim.new(1, 0)
+    
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 20, 0, 20)
+    dot.Position = UDim2.new(0, 3, 0.5, -10)
+    dot.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    dot.BorderSizePixel = 0
+    dot.ZIndex = 7
+    dot.Parent = switch
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+    
+    local TweenService = game:GetService("TweenService")
+    
+    switch.MouseButton1Click:Connect(function()
+        State.freecamEnabled = not State.freecamEnabled
+        if State.freecamEnabled then enableFreeCam() else disableFreeCam() end
+        
+        local newColor = State.freecamEnabled and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+        local newPos = State.freecamEnabled and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10)
+        TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+        TweenService:Create(dot, TweenInfo.new(0.2), {Position = newPos}):Play()
+    end)
+    
+    freecamControlRef = {
+        setToggle = function(on)
+            State.freecamEnabled = on
+            local newColor = on and Color3.fromRGB(138, 43, 226) or Color3.fromRGB(50, 50, 60)
+            local newPos = on and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10)
+            TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = newColor}):Play()
+            TweenService:Create(dot, TweenInfo.new(0.2), {Position = newPos}):Play()
+        end
+    }
+    
+    -- Slider logic
+    local dragging = false
+    local function updateSlider(input)
+        local sizeX = barBg.AbsoluteSize.X
+        local pos = math.clamp((input.Position.X - barBg.AbsolutePosition.X) / sizeX, 0, 1)
+        local value = math.floor(1 + (499 * pos))
+        fill.Size = UDim2.new(pos, 0, 1, 0)
+        valueLabel.Text = tostring(value)
+        State.freecamSpeed = value
+    end
+    
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    fill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    grabber.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 22, 0, 22)}):Play()
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+            TweenService:Create(grabber, TweenInfo.new(0.15), {Size = UDim2.new(0, 18, 0, 18)}):Play()
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input)
+        end
+    end)
+end
+
+print("✓ Camera Module Loaded")
+
+return true

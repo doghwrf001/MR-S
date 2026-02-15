@@ -1,0 +1,396 @@
+--==============================================================================
+--                    AEGIS HUB - TROLLING FLING MODULE (MODIFIED)
+--==============================================================================
+
+local AegisHub = _G.AegisHub
+if not AegisHub or not AegisHub.TrollingFling then 
+    warn("Aegis Hub not loaded!") 
+    return 
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local page = AegisHub.TrollingFling
+local Library = AegisHub.Library
+
+-- Aegis Team Names
+local AEGIS_TEAMS = {
+    "AEGIS Corporation",
+    "Conference",
+    "Experiment1",
+    "Experiment2",
+    "Insurrectionist",
+    "Interrogation",
+    "Interview1",
+    "Interview2",
+    "Lesson1",
+    "Lesson2",
+    "Patrol1",
+    "Patrol2",
+    "Patrol3",
+    "Patrol4",
+    "Rally",
+    "Sewer Dweller",
+    "Subject",
+    "The Chairman",
+    "Training"
+}
+
+-- Fling Config
+local UPDATE_INTERVAL = 0.01
+local SWITCH_INTERVAL = 1.5 -- Switch players 
+local SPIN_SPEED = 7000
+local PUSH_SPEED = 800
+local INSIDE_OFFSET = Vector3.new(0, 0, 0)
+local ORBIT_RADIUS = 4 -- Set to 0 (can change back to 2+ to enable orbit)
+local ORBIT_TIME = 0.5 -- Time spent orbiting
+local INSIDE_TIME = 1 -- Time spent inside 
+local JUMP_INTERVAL = 1 -- Force jump every 1 second
+
+-- State
+local State = {
+    flingAll = false,
+    flingWastelanders = false,
+    flingAegis = false,
+    
+    updateElapsed = 0,
+    switchElapsed = 0,
+    currentTargetHRP = nil,
+    currentTargetIndex = 1,
+    targetList = {}, -- Sequential list of targets
+    ax = 0,
+    ay = 0,
+    az = 0,
+    
+    phaseTime = 0,
+    isOrbiting = true, -- Start with orbit
+    orbitAngle = 0,
+    jumpTime = 0,
+    
+    flingConnection = nil
+}
+
+-- Helper: Get HumanoidRootPart
+local function getHRP(character)
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+-- Check if player is sitting
+local function isSitting(character)
+    local hum = character and character:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    return hum.Sit
+end
+
+-- Check if player is moving
+local function isMoving(hrp)
+    if not hrp then return false end
+    local velocity = hrp.AssemblyLinearVelocity
+    return velocity.Magnitude > 3
+end
+
+-- Check if player is on Aegis team
+local function isAegisPlayer(plr)
+    if not plr or not plr.Team then return false end
+    
+    for _, teamName in ipairs(AEGIS_TEAMS) do
+        if plr.Team.Name == teamName then
+            return true
+        end
+    end
+    return false
+end
+
+-- Build sequential target list (no repeats until list restarts)
+local function buildTargetList()
+    local candidates = {}
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            local char = plr.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local hrp = getHRP(char)
+            
+            if hum and hrp and hum.Health > 0 then
+                -- Check if valid (not sitting, not moving)
+                local isValid = true
+                
+                if isSitting(char) then
+                    isValid = false
+                end
+                
+                if isMoving(hrp) then
+                    isValid = false
+                end
+                
+                if isValid then
+                    local shouldTarget = false
+                    
+                    if State.flingAll then
+                        shouldTarget = true
+                    elseif State.flingWastelanders then
+                        shouldTarget = not isAegisPlayer(plr)
+                    elseif State.flingAegis then
+                        shouldTarget = isAegisPlayer(plr)
+                    end
+                    
+                    if shouldTarget then
+                        table.insert(candidates, hrp)
+                    end
+                end
+            end
+        end
+    end
+    
+    return candidates
+end
+
+-- Get next target from sequential list
+local function getNextTargetHRP()
+    -- Rebuild list if empty or index out of bounds
+    if #State.targetList == 0 or State.currentTargetIndex > #State.targetList then
+        State.targetList = buildTargetList()
+        State.currentTargetIndex = 1
+        
+        if #State.targetList == 0 then
+            return nil
+        end
+    end
+    
+    local target = State.targetList[State.currentTargetIndex]
+    State.currentTargetIndex = State.currentTargetIndex + 1
+    
+    return target
+end
+
+-- Start Fling
+local function startFling()
+    if State.flingConnection then return end
+    
+    State.updateElapsed = 0
+    State.switchElapsed = 0
+    State.currentTargetHRP = nil
+    State.currentTargetIndex = 1
+    State.targetList = {}
+    State.ax = 0
+    State.ay = 0
+    State.az = 0
+    State.phaseTime = 0
+    State.isOrbiting = true
+    State.orbitAngle = 0
+    State.jumpTime = 0
+    
+    State.flingConnection = RunService.Heartbeat:Connect(function(dt)
+        State.updateElapsed = State.updateElapsed + dt
+        State.switchElapsed = State.switchElapsed + dt
+        State.phaseTime = State.phaseTime + dt
+        State.jumpTime = State.jumpTime + dt
+        
+        -- Force jump every 0.5 seconds
+        local myChar = player.Character
+        local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+        if myHum and State.jumpTime >= JUMP_INTERVAL then
+            State.jumpTime = 0
+            myHum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+        
+        -- Switch between orbit and inside phases
+        if State.phaseTime >= (State.isOrbiting and ORBIT_TIME or INSIDE_TIME) then
+            State.phaseTime = 0
+            State.isOrbiting = not State.isOrbiting
+            State.orbitAngle = 0
+        end
+        
+        -- Pick next target from sequential list every SWITCH_INTERVAL seconds
+        if not State.currentTargetHRP or State.switchElapsed >= SWITCH_INTERVAL then
+            State.currentTargetHRP = getNextTargetHRP()
+            State.switchElapsed = 0
+            
+            -- Spectate new target
+            if State.currentTargetHRP then
+                local targetPlayer = Players:GetPlayerFromCharacter(State.currentTargetHRP.Parent)
+                if targetPlayer then
+                    workspace.CurrentCamera.CameraSubject = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+                    print("🎯 Targeting: " .. targetPlayer.Name .. " (" .. State.currentTargetIndex - 1 .. "/" .. #State.targetList .. ")")
+                end
+            end
+        end
+        
+        if State.updateElapsed < UPDATE_INTERVAL then return end
+        State.updateElapsed = 0
+        
+        local myChar = player.Character
+        local myHRP = getHRP(myChar)
+        if not myHRP then return end
+        if not State.currentTargetHRP then return end
+        
+        -- Validate target still exists and is valid
+        if not State.currentTargetHRP.Parent then
+            State.currentTargetHRP = nil
+            return
+        end
+        
+        -- Check if target became invalid (sitting or moving)
+        if isSitting(State.currentTargetHRP.Parent) or isMoving(State.currentTargetHRP) then
+            State.currentTargetHRP = nil
+            return
+        end
+        
+        -- Spin math
+        local rps = math.rad(SPIN_SPEED)
+        State.ax = State.ax + rps * dt
+        State.ay = State.ay + rps * dt
+        State.az = State.az + rps * dt
+        local spinCF = CFrame.Angles(State.ax, State.ay, State.az)
+        
+        if State.isOrbiting and ORBIT_RADIUS > 0 then
+            -- ORBIT PHASE: Spin around target in a circle (only if radius > 0)
+            State.orbitAngle = State.orbitAngle + math.rad(360) * dt / ORBIT_TIME
+            
+            local offsetX = math.cos(State.orbitAngle) * ORBIT_RADIUS
+            local offsetZ = math.sin(State.orbitAngle) * ORBIT_RADIUS
+            
+            myHRP.CFrame = State.currentTargetHRP.CFrame * CFrame.new(offsetX, 0, offsetZ) * spinCF
+            myHRP.AssemblyLinearVelocity = State.currentTargetHRP.CFrame.LookVector * PUSH_SPEED
+        else
+            -- INSIDE PHASE: Teleport inside target (or if orbit disabled)
+            local baseCF = State.currentTargetHRP.CFrame * CFrame.new(INSIDE_OFFSET)
+            myHRP.CFrame = baseCF * spinCF
+            myHRP.AssemblyLinearVelocity = State.currentTargetHRP.CFrame.LookVector * PUSH_SPEED
+        end
+    end)
+    
+    print("✓ Fling started (Sequential targets, 1.5s inside, orbit radius: " .. ORBIT_RADIUS .. ")")
+end
+
+-- Stop Fling
+local function stopFling()
+    if State.flingConnection then
+        State.flingConnection:Disconnect()
+        State.flingConnection = nil
+    end
+    
+    -- Restore camera to player
+    local myChar = player.Character
+    if myChar then
+        local myHum = myChar:FindFirstChildOfClass("Humanoid")
+        if myHum then
+            workspace.CurrentCamera.CameraSubject = myHum
+        end
+    end
+    
+    -- Keep current velocity to prevent snap-back
+    local myHRP = getHRP(player.Character)
+    if myHRP then
+        local currentVelocity = myHRP.AssemblyLinearVelocity
+        task.wait(0.05)
+        if myHRP then
+            myHRP.AssemblyLinearVelocity = currentVelocity * 0.5
+        end
+    end
+    
+    State.currentTargetHRP = nil
+    State.targetList = {}
+    State.currentTargetIndex = 1
+    print("✓ Fling stopped")
+end
+
+-- Handle player death - teleport to 0,0,0
+local function onCharacterAdded(char)
+    local hum = char:WaitForChild("Humanoid")
+    
+    hum.Died:Connect(function()
+        print("💀 Player died - teleporting to 0,0,0")
+        task.wait(0.1) -- Small delay to ensure respawn
+        
+        local newChar = player.Character
+        if newChar then
+            local newHRP = getHRP(newChar)
+            if newHRP then
+                newHRP.CFrame = CFrame.new(0, 0, 0)
+                print("✓ Teleported to spawn")
+            end
+        end
+    end)
+end
+
+-- Connect death handler to current and future characters
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+player.CharacterAdded:Connect(onCharacterAdded)
+
+-- Handle character respawn
+player.CharacterAdded:Connect(function(char)
+    print("🔄 Character respawned - restarting fling...")
+    
+    -- Wait for character to fully load
+    task.wait(1)
+    
+    -- Check if any mode is active and restart
+    local anyActive = State.flingAll or State.flingWastelanders or State.flingAegis
+    
+    if anyActive then
+        -- Stop old connection if it exists
+        if State.flingConnection then
+            State.flingConnection:Disconnect()
+            State.flingConnection = nil
+        end
+        
+        -- Restart fling
+        startFling()
+    end
+end)
+
+-- Update fling state
+local function updateFlingState(mode)
+    -- Turn off all other modes
+    if mode ~= "all" then State.flingAll = false end
+    if mode ~= "wastelanders" then State.flingWastelanders = false end
+    if mode ~= "aegis" then State.flingAegis = false end
+    
+    -- Check if any mode is active
+    local anyActive = State.flingAll or State.flingWastelanders or State.flingAegis
+    
+    if anyActive then
+        startFling()
+    else
+        stopFling()
+    end
+end
+
+--==============================================================================
+--                          CREATE UI
+--==============================================================================
+
+-- TEAM SELECTION (Auto-start, only one active at a time)
+
+-- Fling All
+do
+    local toggle = Library:CreateToggle(page, "Fling All Players", false, function(v)
+        State.flingAll = v
+        updateFlingState("all")
+    end)
+end
+
+-- Fling Aegis
+do
+    local toggle = Library:CreateToggle(page, "Fling Aegis Teams", false, function(v)
+        State.flingAegis = v
+        updateFlingState("aegis")
+    end)
+end
+
+-- Fling Wastelanders
+do
+    local toggle = Library:CreateToggle(page, "Fling Wastelanders", false, function(v)
+        State.flingWastelanders = v
+        updateFlingState("wastelanders")
+    end)
+end
+
+print("✓ Trolling Fling Module Loaded (Sequential List, 1.5s Inside, Orbit: " .. ORBIT_RADIUS .. ")")
+
+return true
