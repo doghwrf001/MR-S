@@ -1,0 +1,82 @@
+-- made by Bazuka
+
+local args = {
+    {
+        100839513065432
+    }
+}
+game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ChangeCharacterBody"):InvokeServer(unpack(args))
+
+local function missing(t, f, fallback)
+    if type(f) == t then return f end
+    return fallback 
+end
+
+cloneref = missing("function", cloneref, function(...) return ... end)
+local Services = setmetatable({}, {
+    __index = function(_, name)
+        return cloneref(game:GetService(name))
+    end
+})
+
+local Players = Services.Players
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+
+player.CharacterAdded:Connect(function(newCharacter)
+    character = newCharacter
+    humanoid = character:WaitForChild("Humanoid")
+end)
+
+-- Configurações
+local Settings = {
+    ["Fade In"] = 0.1,
+    ["Fade Out"] = 0.1,
+    ["Weight"] = 1,
+    ["Speed"] = 1,
+    ["Time Position"] = 0
+}
+
+local CurrentTrack
+
+local function LoadTrack(id)
+    if CurrentTrack then 
+        CurrentTrack:Stop(0) 
+    end
+
+    local animId
+    local ok, result = pcall(function()
+        return game:GetObjects("rbxassetid://" .. tostring(id))
+    end)
+
+    if ok and result and #result > 0 then
+        local anim = result[1]
+        if anim:IsA("Animation") then
+            animId = anim.AnimationId
+        else
+            animId = "rbxassetid://" .. tostring(id)
+        end
+    else
+        animId = "rbxassetid://" .. tostring(id)
+    end
+
+    local newAnim = Instance.new("Animation")
+    newAnim.AnimationId = animId
+    local newTrack = humanoid:LoadAnimation(newAnim)
+    newTrack.Priority = Enum.AnimationPriority.Action4
+
+    local weight = Settings["Weight"]
+    if weight == 0 then weight = 0.001 end
+
+    newTrack:Play(Settings["Fade In"], weight, Settings["Speed"])
+    
+    CurrentTrack = newTrack
+    CurrentTrack.TimePosition = math.clamp(Settings["Time Position"], 0, 1) * CurrentTrack.Length
+
+    return newTrack
+end
+
+
+local EmoteId = 70883871260184
+LoadTrack(EmoteId)
