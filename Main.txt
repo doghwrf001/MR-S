@@ -1,0 +1,4 @@
+local s = {
+{"15312911732", "14532583477", "14532583469", "14532583517", "14532583483", "134082579"}
+}
+game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ChangeCharacterBody"):InvokeServer(unpack(s))
